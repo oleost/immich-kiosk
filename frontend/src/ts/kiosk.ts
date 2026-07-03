@@ -32,6 +32,7 @@ import { tryRecoveryMode } from "./recovery";
 import { sleepMode } from "./sleep";
 import { preventSleep } from "./wakelock";
 import { weatherRotationPosition } from "./weather";
+import { initMqttSSE } from "./mqtt-sse";
 
 ("use strict");
 
@@ -234,6 +235,8 @@ async function init(): Promise<void> {
     addEventListeners();
 
     if (kioskData.livePhotos) livePhoto(kioskData.livePhotoLoopDelay);
+
+    initMqttSSE();
 
     // Burn-in prevention
     if (kioskData.burnInInterval > 0 && kioskData.burnInDuration > 0) {
