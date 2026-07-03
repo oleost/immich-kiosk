@@ -30,6 +30,7 @@ import (
 	"github.com/damongolding/immich-kiosk/internal/cache"
 	"github.com/damongolding/immich-kiosk/internal/common"
 	"github.com/damongolding/immich-kiosk/internal/config"
+	"github.com/damongolding/immich-kiosk/internal/mqtt"
 	"github.com/damongolding/immich-kiosk/internal/i18n"
 	"github.com/damongolding/immich-kiosk/internal/immich"
 	"github.com/damongolding/immich-kiosk/internal/routes"
@@ -147,6 +148,17 @@ func main() {
 		baseConfig.WatchConfig(c.Context())
 	}
 
+	if baseConfig.Kiosk.MqttEnabled {
+		mqttClient, mqttErr := mqtt.New(c.Context(), baseConfig.Kiosk)
+		if mqttErr != nil {
+			log.Error("Failed to connect to MQTT broker", "err", mqttErr)
+		} else {
+			mqttClient.AddHandler(routes.MQTTCommandHandler())
+			routes.SetNewClientHandler(mqttClient.PublishClientDiscovery)
+			log.Warn("MQTT enabled", "broker", baseConfig.Kiosk.MqttBroker, "topic_prefix", baseConfig.Kiosk.MqttTopicPrefix)
+		}
+	}
+
 	if baseConfig.Kiosk.Debug {
 		log.SetLevel(log.DebugLevel)
 		if baseConfig.Kiosk.DebugVerbose {
@@ -194,6 +206,7 @@ func main() {
 	})
 
 	e.GET("/recover", routes.Recovering(baseConfig, &public))
+	e.GET("/events", routes.SSEEvents(baseConfig))
 
 	if baseConfig.Kiosk.EnableURLBuilder {
 		e.GET("/url-builder", routes.URLBuilderPage(baseConfig, c, false))
@@ -292,7 +305,7 @@ func addMiddleware(e *echo.Echo, baseConfig *config.Config) {
 	e.Use(middleware.GzipWithConfig(middleware.GzipConfig{
 		Level: 6,
 		Skipper: func(c *echo.Context) bool {
-			return strings.Contains(c.Path(), "image")
+			return strings.Contains(c.Path(), "image") || c.Path() == "/events"
 		},
 	}))
 
