@@ -187,7 +187,11 @@ async function init(): Promise<void> {
     }
 
     if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("/assets/js/sw.js").then(
+        // Register with an explicit root scope so the worker can intercept
+        // top-level navigations and serve an offline fallback when the Kiosk
+        // server is unreachable (otherwise an installed iOS PWA gets stuck on
+        // Safari's error page). Requires the `Service-Worker-Allowed: /` header.
+        navigator.serviceWorker.register("/assets/js/sw.js", { scope: "/" }).then(
             () => {
                 console.log("ServiceWorker registration successful");
             },
@@ -195,6 +199,22 @@ async function init(): Promise<void> {
                 console.log("ServiceWorker registration failed: ", err);
             },
         );
+
+        // Drop any earlier registration that was scoped to /assets/js/ and could
+        // not control page navigations.
+        navigator.serviceWorker
+            .getRegistrations()
+            .then((registrations) => {
+                for (const registration of registrations) {
+                    if (!registration.scope.endsWith("/assets/js/")) {
+                        continue;
+                    }
+                    registration.unregister();
+                }
+            })
+            .catch(() => {
+                /* nothing we can do */
+            });
     }
 
     if (!fullscreenAPI.requestFullscreen) {

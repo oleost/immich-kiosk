@@ -174,6 +174,19 @@ func main() {
 	e.FileFS("/assets/js/kiosk.*.js", "frontend/public/assets/js/kiosk.js", public, StaticCacheMiddlewareWithConfig(baseConfig))
 	e.FileFS("/assets/js/url-builder.*.js", "frontend/public/assets/js/url-builder.js", public, StaticCacheMiddlewareWithConfig(baseConfig))
 
+	// Serve the service worker with `Service-Worker-Allowed: /` so it can be
+	// registered with a root scope and intercept top-level navigations (offline
+	// fallback for the installed PWA), not just requests under /assets/js/.
+	serviceWorkerJS, swErr := public.ReadFile("frontend/public/assets/js/sw.js")
+	if swErr != nil {
+		log.Error("reading service worker", "err", swErr)
+	}
+	e.GET("/assets/js/sw.js", func(c *echo.Context) error {
+		c.Response().Header().Set("Service-Worker-Allowed", "/")
+		c.Response().Header().Set("Cache-Control", "no-cache")
+		return c.Blob(http.StatusOK, "text/javascript; charset=utf-8", serviceWorkerJS)
+	})
+
 	// serve embdedd staic assets
 	e.StaticFS("/assets", echo.MustSubFS(public, "frontend/public/assets"))
 
