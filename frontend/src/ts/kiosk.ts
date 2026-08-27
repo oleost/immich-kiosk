@@ -90,6 +90,12 @@ const MAX_FRAMES: number = 2 as const;
 const TIMEOUT_RETRIES: number = 2 as const;
 const timeouts: Record<string, number> = {};
 
+// Consecutive failed polls (network error or 5xx) after which we consider a
+// reload. Slightly more lenient than TIMEOUT_RETRIES since a single 5xx is
+// often just a transient blip.
+const FAILED_REQUEST_RETRIES: number = 3 as const;
+let consecutiveFailedRequests = 0;
+
 // Parse kiosk data from the HTML element
 const kioskData: KioskData = JSON.parse(
     document.getElementById("kiosk-data")?.textContent || "{}",
@@ -187,7 +193,11 @@ async function init(): Promise<void> {
     }
 
     if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("/assets/js/sw.js").then(
+        // Register with an explicit root scope so the worker can intercept
+        // top-level navigations and serve an offline fallback when the Kiosk
+        // server is unreachable (otherwise an installed iOS PWA gets stuck on
+        // Safari's error page). Requires the `Service-Worker-Allowed: /` header.
+        navigator.serviceWorker.register("/assets/js/sw.js", { scope: "/" }).then(
             () => {
                 console.log("ServiceWorker registration successful");
             },
@@ -195,6 +205,22 @@ async function init(): Promise<void> {
                 console.log("ServiceWorker registration failed: ", err);
             },
         );
+
+        // Drop any earlier registration that was scoped to /assets/js/ and could
+        // not control page navigations.
+        navigator.serviceWorker
+            .getRegistrations()
+            .then((registrations) => {
+                for (const registration of registrations) {
+                    if (!registration.scope.endsWith("/assets/js/")) {
+                        continue;
+                    }
+                    registration.unregister();
+                }
+            })
+            .catch(() => {
+                /* nothing we can do */
+            });
     }
 
     if (!fullscreenAPI.requestFullscreen) {
@@ -392,8 +418,14 @@ function addEventListeners(): void {
         if (e.detail.successful) {
             htmx.removeClass(offlineSVG, "offline");
             timeouts[e.detail.pathInfo.requestPath] = 0;
+            consecutiveFailedRequests = 0;
         } else {
             htmx.addClass(offlineSVG, "offline");
+
+            consecutiveFailedRequests += 1;
+            if (consecutiveFailedRequests > FAILED_REQUEST_RETRIES) {
+                maybeEnterOfflineRecovery();
+            }
         }
     });
 
@@ -420,7 +452,11 @@ function addEventListeners(): void {
         timeouts[e.detail.pathInfo.requestPath] = currentTimeout;
 
         if (currentTimeout > TIMEOUT_RETRIES) {
-            window.location.reload();
+            // A hung request ("server stopped responding") is the classic iOS
+            // white-screen trigger — never reload straight into it. Route through
+            // the /health probe: overlay if the server is down, nothing if it is
+            // just downstream slowness.
+            maybeEnterOfflineRecovery();
         }
     });
 
@@ -574,6 +610,112 @@ function releaseRequestLock(): void {
     enableAssetNavigationButtons();
 
     requestInFlight = false;
+}
+
+let offlineOverlayEl: HTMLElement | null = null;
+
+/**
+ * Probes `/health` and, once it answers, reloads onto a fresh kiosk page.
+ * @description Only ever called while the offline overlay is up, i.e. after we
+ * have already confirmed the server was unreachable. Reloading here is safe
+ * because the navigation is guaranteed to succeed.
+ */
+function probeHealthAndRecover(): void {
+    fetch("/health", { method: "GET", cache: "no-store" })
+        .then((response) => {
+            if (response.ok) {
+                window.location.reload();
+            }
+        })
+        .catch(() => {
+            /* still down — keep waiting */
+        });
+}
+
+function onOfflineVisibilityChange(): void {
+    // iOS suspends timers while an installed PWA is backgrounded; re-probe as
+    // soon as it comes back to the foreground.
+    if (!document.hidden) {
+        probeHealthAndRecover();
+    }
+}
+
+/**
+ * Covers the (still rendered) kiosk with a full-screen "unavailable" overlay and
+ * starts polling `/health` until the server is back.
+ * @description We deliberately do NOT navigate or reload while the server is
+ * down. An installed iOS PWA in standalone mode does not route a failed
+ * top-level navigation through the service worker, so `location.reload()` during
+ * an outage lands on Safari's native "cannot open page" screen and the
+ * home-screen app is stuck until it is force-quit. Keeping the current document
+ * alive and only reloading once `/health` answers avoids that entirely; the
+ * service worker's offline page stays as the safety net for a cold start.
+ */
+function enterOfflineRecovery(): void {
+    if (offlineOverlayEl) {
+        return;
+    }
+
+    stopPolling();
+
+    const overlay = document.createElement("div");
+    overlay.id = "kiosk-offline-overlay";
+    overlay.setAttribute("role", "alert");
+    overlay.style.cssText = [
+        "position:fixed",
+        "inset:0",
+        "z-index:2147483647",
+        "display:flex",
+        "align-items:center",
+        "justify-content:center",
+        "text-align:center",
+        "background:#000",
+        "color:#8a8a8a",
+        'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif',
+        "-webkit-user-select:none",
+        "user-select:none",
+    ].join(";");
+    overlay.innerHTML =
+        '<div style="padding:2rem;max-width:22rem">' +
+        '<h1 style="font-size:1rem;font-weight:600;color:#c9c9c9;margin:0 0 .5rem">' +
+        '<span style="width:.6rem;height:.6rem;border-radius:50%;background:#c23b3b;' +
+        "display:inline-block;margin-right:.5rem;vertical-align:middle;" +
+        'animation:kiosk-offline-pulse 1.6s ease-in-out infinite"></span>' +
+        "Kiosk unavailable</h1>" +
+        '<p style="font-size:.8rem;line-height:1.5;margin:0">' +
+        "Trying to reconnect automatically&hellip;</p></div>" +
+        "<style>@keyframes kiosk-offline-pulse{0%,100%{opacity:.25}50%{opacity:1}}</style>";
+
+    document.body.appendChild(overlay);
+    offlineOverlayEl = overlay;
+
+    window.setInterval(probeHealthAndRecover, 3000);
+    document.addEventListener("visibilitychange", onOfflineVisibilityChange);
+    window.addEventListener("pageshow", probeHealthAndRecover);
+
+    probeHealthAndRecover();
+}
+
+/**
+ * Decides how to react to a burst of failed/timed-out polls.
+ * @description If `/health` still answers, the fault is downstream (e.g. Immich):
+ * keep showing the last asset with the offline indicator rather than reacting at
+ * all, so we never reload-loop. If `/health` is unreachable or errors, the Kiosk
+ * server itself is down — show the offline overlay (never a reload). The counter
+ * is reset up front so the probe runs at most once per burst.
+ */
+function maybeEnterOfflineRecovery(): void {
+    consecutiveFailedRequests = 0;
+
+    fetch("/health", { method: "GET", cache: "no-store" })
+        .then((response) => {
+            if (!response.ok) {
+                enterOfflineRecovery();
+            }
+        })
+        .catch(() => {
+            enterOfflineRecovery();
+        });
 }
 
 /**

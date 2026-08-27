@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#000000">
+    <title>Immich Kiosk</title>
+    <style>
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: #000;
+            color: #8a8a8a;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        .wrap {
+            padding: 2rem;
+            max-width: 22rem;
+        }
+
+        .dot {
+            width: 0.6rem;
+            height: 0.6rem;
+            border-radius: 50%;
+            background: #c23b3b;
+            display: inline-block;
+            margin-right: 0.5rem;
+            vertical-align: middle;
+            animation: pulse 1.6s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.25; }
+            50% { opacity: 1; }
+        }
+
+        h1 {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #c9c9c9;
+            margin: 0 0 0.5rem;
+        }
+
+        p {
+            font-size: 0.8rem;
+            line-height: 1.5;
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <h1><span class="dot"></span>Kiosk unavailable</h1>
+        <p>Trying to reconnect automatically&hellip;</p>
+    </div>
+    <script>
+        (function () {
+            var RETRY_MS = 3000;
+
+            function check() {
+                fetch("/health", { method: "GET", cache: "no-store" })
+                    .then(function (r) {
+                        if (r && r.ok) {
+                            // Server is back — reload the current URL so all query
+                            // parameters (client, password, …) are preserved.
+                            window.location.reload();
+                        }
+                    })
+                    .catch(function () {
+                        /* still offline */
+                    });
+            }
+
+            setInterval(check, RETRY_MS);
+            window.addEventListener("online", check);
+            // iOS throttles/pauses timers while the PWA is backgrounded; re-check
+            // the moment the user brings the shortcut back to the foreground.
+            window.addEventListener("pageshow", check);
+            document.addEventListener("visibilitychange", function () {
+                if (!document.hidden) {
+                    check();
+                }
+            });
+            check();
+        })();
+    </script>
+</body>
+</html>
