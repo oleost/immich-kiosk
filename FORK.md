@@ -58,9 +58,9 @@ Screen" app a failed initial load then sticks on Safari's error page until the
 shortcut is recreated.
 
 This change registers the worker at root scope and serves a small self-retrying
-offline page when the server is unreachable; it reloads once `/health` responds
-again. The worker also handles the failure modes from upstream issue #802
-(container crash/restart leaves a remote device on a permanent blank screen):
+offline page when the server is unreachable. The worker handles every "server
+went away" flavour a reverse-proxied kiosk sees when the container
+crashes/restarts:
 
 - navigation fails outright (container down, connection refused);
 - navigation hangs — connection accepted, no response ("the server stopped
@@ -73,15 +73,23 @@ again. The worker also handles the failure modes from upstream issue #802
 The offline page is embedded in the worker script as well, so a navigation is
 always answered even when Cache Storage is empty or was evicted.
 
-The service worker only covers navigations. For a kiosk that is already loaded
-and running (the #802 Raspberry Pi case), `kiosk.ts` now reloads the page after
-`FAILED_REQUEST_RETRIES` consecutive failed polls — but only when `/health` is
-itself unreachable, so a downstream fault (e.g. Immich down while Kiosk is up)
-keeps showing the last asset with the offline indicator instead of reload-looping.
+**In-page recovery (the important part for iOS).** An installed iOS PWA in
+standalone mode does not route a *failed* top-level navigation through the
+service worker, so `location.reload()` during an outage still lands on Safari's
+native error screen. So for a kiosk that is already loaded and running, `kiosk.ts`
+never reloads while the server is down: after a burst of failed/timed-out polls
+it probes `/health` and, if that is unreachable, covers the still-rendered page
+with a full-screen "Kiosk unavailable" overlay and polls `/health` from the live
+document (also on `visibilitychange`/`pageshow`, since iOS freezes timers in the
+background). Only once `/health` answers does it reload — a navigation that is
+then guaranteed to succeed. If `/health` still answers during the failures the
+fault is downstream (e.g. Immich): the last asset stays up with the offline
+indicator and nothing reloads, so there is no reload loop.
 
 - `frontend/public/assets/js/sw.js`, `frontend/public/assets/offline.html`
 - `frontend/src/ts/kiosk.ts` (registration + cleanup of the old registration;
-  reload-after-failed-polls recovery)
+  in-page offline overlay + reload-when-healthy recovery)
 - `main.go` (`/assets/js/sw.js` route with `Service-Worker-Allowed: /`)
 
-Candidate for an upstream PR — it fixes a genuine upstream bug.
+Candidate for an upstream PR — it fixes a genuine upstream bug (installed kiosks
+stuck on a blank screen after a container restart).
