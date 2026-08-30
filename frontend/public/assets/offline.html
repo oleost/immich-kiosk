@@ -64,7 +64,7 @@
     </div>
     <script>
         (function () {
-            var RETRY_MS = 5000;
+            var RETRY_MS = 3000;
 
             function check() {
                 fetch("/health", { method: "GET", cache: "no-store" })
@@ -82,6 +82,14 @@
 
             setInterval(check, RETRY_MS);
             window.addEventListener("online", check);
+            // iOS throttles/pauses timers while the PWA is backgrounded; re-check
+            // the moment the user brings the shortcut back to the foreground.
+            window.addEventListener("pageshow", check);
+            document.addEventListener("visibilitychange", function () {
+                if (!document.hidden) {
+                    check();
+                }
+            });
             check();
         })();
     </script>

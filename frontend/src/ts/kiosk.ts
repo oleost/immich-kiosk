@@ -90,6 +90,12 @@ const MAX_FRAMES: number = 2 as const;
 const TIMEOUT_RETRIES: number = 2 as const;
 const timeouts: Record<string, number> = {};
 
+// Consecutive failed polls (network error or 5xx) after which we consider a
+// reload. Slightly more lenient than TIMEOUT_RETRIES since a single 5xx is
+// often just a transient blip.
+const FAILED_REQUEST_RETRIES: number = 3 as const;
+let consecutiveFailedRequests = 0;
+
 // Parse kiosk data from the HTML element
 const kioskData: KioskData = JSON.parse(
     document.getElementById("kiosk-data")?.textContent || "{}",
@@ -412,8 +418,14 @@ function addEventListeners(): void {
         if (e.detail.successful) {
             htmx.removeClass(offlineSVG, "offline");
             timeouts[e.detail.pathInfo.requestPath] = 0;
+            consecutiveFailedRequests = 0;
         } else {
             htmx.addClass(offlineSVG, "offline");
+
+            consecutiveFailedRequests += 1;
+            if (consecutiveFailedRequests > FAILED_REQUEST_RETRIES) {
+                maybeReloadAfterFailures();
+            }
         }
     });
 
@@ -594,6 +606,31 @@ function releaseRequestLock(): void {
     enableAssetNavigationButtons();
 
     requestInFlight = false;
+}
+
+/**
+ * Reloads the page after repeated failed polls, but only when the Kiosk server
+ * itself is unreachable.
+ * @description A reload during a real outage lands on the service worker's
+ * self-retrying offline page, which recovers the kiosk once the server is back.
+ * If `/health` still answers, the fault is downstream (e.g. Immich); reloading
+ * would just loop, so we keep showing the last asset with the offline
+ * indicator instead. The counter is reset up front so the probe runs at most
+ * once per burst of failures.
+ */
+function maybeReloadAfterFailures(): void {
+    consecutiveFailedRequests = 0;
+
+    fetch("/health", { method: "GET", cache: "no-store" })
+        .then((response) => {
+            if (!response.ok) {
+                window.location.reload();
+            }
+        })
+        .catch(() => {
+            // Kiosk server unreachable — reload onto the offline page.
+            window.location.reload();
+        });
 }
 
 /**
