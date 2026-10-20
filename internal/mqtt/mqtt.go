@@ -2,15 +2,20 @@
 //
 // On connect it publishes Home Assistant MQTT Discovery messages so the kiosk
 // appears automatically in Home Assistant. Each named client (e.g. ?client=living-room)
-// gets its own HA device with Next and Previous buttons, in addition to a global
-// device that controls all connected clients at once.
+// gets its own HA device, in addition to a global device that controls all
+// connected clients at once.
 //
 // MQTT topics:
 //
-//	<prefix>/command          – send command to ALL connected clients
-//	<prefix>/<client>/command – send command to a specific client only
-//	<prefix>/status           – availability (online/offline) for global device
-//	<prefix>/<client>/status  – availability for a specific client
+//	<prefix>/command                          – navigation command to all clients
+//	<prefix>/<client>/command                 – navigation command to one client
+//	<prefix>/override/command                 – override command to all clients
+//	<prefix>/<client>/override/command        – override command to one client
+//	<prefix>/override/<source>/set            – HA select input (all clients)
+//	<prefix>/<client>/override/<source>/set   – HA select input (one client)
+//	<prefix>/override/<source>/state          – HA select state (all clients)
+//	<prefix>/<client>/override/<source>/state – HA select state (one client)
+//	<prefix>/status                           – availability (online/offline)
 package mqtt
 
 import (
@@ -35,21 +40,58 @@ const (
 	CommandPrevious Command = "previous"
 )
 
-// Handler is called when a valid command is received.
+// Handler is called when a valid navigation command is received.
 // target is the client name the command is directed at, or "" for all clients.
 type Handler func(cmd Command, target string)
+
+// OverrideAction is the action of an OverrideCommand.
+type OverrideAction string
+
+const (
+	OverrideStart   OverrideAction = "start"
+	OverrideStop    OverrideAction = "stop"
+	OverrideRefresh OverrideAction = "refresh-sources"
+)
+
+// overrideOff is the select option (and state) meaning "no override".
+const overrideOff = "off"
+
+// OverrideCommand is an override instruction received via MQTT.
+type OverrideCommand struct {
+	Action    OverrideAction
+	SourceKey string // empty for a plain "stop" or "refresh-sources"
+	AssetName string // empty to show the whole album
+	Target    string // client name, or "" for all clients
+}
+
+// OverrideProvider connects the MQTT layer to the override store.
+type OverrideProvider struct {
+	Sources []config.OverrideSource
+	// AssetNames returns the selectable labels (description or filename) for a source.
+	AssetNames func(sourceKey string) []string
+	// Current returns the source and asset name of the override set for exactly
+	// this target (no global fallback), and whether one is active.
+	Current func(target string) (sourceKey, assetName string, ok bool)
+	// Clients returns the names of currently connected clients.
+	Clients func() []string
+	// Handle executes an override command.
+	Handle func(cmd OverrideCommand)
+}
 
 // Client wraps the paho MQTT client.
 type Client struct {
 	client      pahomqtt.Client
-	handlers    []Handler
-	handlersMu  sync.RWMutex
-	topic       string // global command topic
-	availTopic  string // global availability topic
 	topicPrefix string
+	clientID    string
+	availTopic  string
+
+	handlers   []Handler
+	handlersMu sync.RWMutex
+
+	override   *OverrideProvider
+	overrideMu sync.RWMutex
 }
 
-// haDevice is the Home Assistant device block.
 type haDevice struct {
 	Identifiers  []string `json:"identifiers"`
 	Name         string   `json:"name"`
@@ -57,12 +99,22 @@ type haDevice struct {
 	Manufacturer string   `json:"manufacturer"`
 }
 
-// haButtonConfig is the HA MQTT Discovery payload for a button entity.
 type haButtonConfig struct {
 	Name              string   `json:"name"`
 	UniqueID          string   `json:"unique_id"`
 	CommandTopic      string   `json:"command_topic"`
 	PayloadPress      string   `json:"payload_press"`
+	AvailabilityTopic string   `json:"availability_topic"`
+	Device            haDevice `json:"device"`
+}
+
+type haSelectConfig struct {
+	Name              string   `json:"name"`
+	UniqueID          string   `json:"unique_id"`
+	CommandTopic      string   `json:"command_topic"`
+	StateTopic        string   `json:"state_topic"`
+	Options           []string `json:"options"`
+	Icon              string   `json:"icon,omitempty"`
 	AvailabilityTopic string   `json:"availability_topic"`
 	Device            haDevice `json:"device"`
 }
@@ -77,9 +129,9 @@ func New(ctx context.Context, settings config.KioskSettings) (*Client, error) {
 	prefix := strings.TrimRight(settings.MqttTopicPrefix, "/")
 
 	c := &Client{
-		topic:       prefix + "/command",
-		availTopic:  prefix + "/status",
 		topicPrefix: prefix,
+		clientID:    settings.MqttClientID,
+		availTopic:  prefix + "/status",
 	}
 
 	opts := pahomqtt.NewClientOptions()
@@ -99,163 +151,253 @@ func New(ctx context.Context, settings config.KioskSettings) (*Client, error) {
 		opts.SetPassword(settings.MqttPassword)
 	}
 
+	subscribeOverride := len(settings.OverrideSources) > 0
+
 	opts.SetOnConnectHandler(func(client pahomqtt.Client) {
 		log.Warn("MQTT connected", "broker", broker)
 
 		client.Publish(c.availTopic, 1, true, "online")
+		c.publishNavDiscovery(client, "")
 
-		// Global discovery (controls all clients at once)
-		c.publishDiscovery(client, settings.MqttClientID, "", "Immich Kiosk (all)")
+		c.subscribe(client, prefix+"/command", c.messageHandler)
+		c.subscribe(client, prefix+"/+/command", c.messageHandler)
 
-		// Subscribe to global commands: immich-kiosk/command
-		if t := client.Subscribe(c.topic, 1, c.messageHandler); t.Wait() && t.Error() != nil {
-			log.Error("MQTT subscribe failed", "topic", c.topic, "err", t.Error())
-		} else {
-			log.Warn("MQTT subscribed", "topic", c.topic)
-		}
-
-		// Subscribe to per-client commands: immich-kiosk/+/command
-		wildcardTopic := prefix + "/+/command"
-		if t := client.Subscribe(wildcardTopic, 1, c.messageHandler); t.Wait() && t.Error() != nil {
-			log.Error("MQTT subscribe failed", "topic", wildcardTopic, "err", t.Error())
-		} else {
-			log.Warn("MQTT subscribed", "topic", wildcardTopic)
+		if subscribeOverride {
+			c.subscribe(client, prefix+"/override/command", c.overrideCommandHandler)
+			c.subscribe(client, prefix+"/+/override/command", c.overrideCommandHandler)
+			c.subscribe(client, prefix+"/override/+/set", c.overrideSelectHandler)
+			c.subscribe(client, prefix+"/+/override/+/set", c.overrideSelectHandler)
+			c.publishOverrideDiscovery(client)
 		}
 	})
 
-	opts.SetConnectionLostHandler(func(client pahomqtt.Client, err error) {
+	opts.SetConnectionLostHandler(func(_ pahomqtt.Client, err error) {
 		log.Warn("MQTT connection lost", "err", err)
 	})
 
-	opts.SetReconnectingHandler(func(client pahomqtt.Client, opts *pahomqtt.ClientOptions) {
+	opts.SetReconnectingHandler(func(_ pahomqtt.Client, _ *pahomqtt.ClientOptions) {
 		log.Warn("MQTT reconnecting...")
 	})
 
 	client := pahomqtt.NewClient(opts)
+	c.client = client
+
 	token := client.Connect()
 	token.Wait()
 	if err := token.Error(); err != nil {
 		return nil, fmt.Errorf("mqtt connect: %w", err)
 	}
 
-	c.client = client
-
 	go func() {
 		<-ctx.Done()
 		log.Warn("MQTT disconnecting")
-		c.client.Publish(c.availTopic, 1, true, "offline")
-		time.Sleep(200 * time.Millisecond)
+		client.Publish(c.availTopic, 1, true, "offline").WaitTimeout(time.Second)
 		client.Disconnect(500)
 	}()
 
 	return c, nil
 }
 
-// isValidClientName returns true if clientName is safe to use as an MQTT
-// topic segment (non-empty, no '/', '#', or '+' characters).
-func isValidClientName(name string) bool {
-	if name == "" {
-		return false
-	}
-	for _, ch := range name {
-		if ch == '/' || ch == '#' || ch == '+' {
-			return false
-		}
-	}
-	return true
-}
-
-// PublishClientDiscovery publishes HA MQTT Discovery for a named client
-// (e.g. "living-room"). Called automatically when a new client connects via SSE.
-func (c *Client) PublishClientDiscovery(clientName string) {
-	if clientName == "_global" {
+func (c *Client) subscribe(client pahomqtt.Client, topic string, cb pahomqtt.MessageHandler) {
+	if t := client.Subscribe(topic, 1, cb); t.Wait() && t.Error() != nil {
+		log.Error("MQTT subscribe failed", "topic", topic, "err", t.Error())
 		return
 	}
-	if !isValidClientName(clientName) {
-		log.Warn("MQTT invalid client name, skipping discovery", "client", clientName)
-		return
-	}
-	uniqueID := "immich-kiosk-" + clientName
-	displayName := "Immich Kiosk - " + clientName
-	c.publishDiscovery(c.client, uniqueID, clientName, displayName)
-	log.Warn("MQTT client discovery published", "client", clientName)
+	log.Debug("MQTT subscribed", "topic", topic)
 }
 
-// publishDiscovery publishes HA MQTT Discovery for Next and Previous buttons.
-// clientName="" means the global device (all clients).
-func (c *Client) publishDiscovery(client pahomqtt.Client, uniqueIDPrefix, clientName, deviceName string) {
-	var commandTopic string
-	if clientName == "" {
-		commandTopic = c.topic
-	} else {
-		commandTopic = fmt.Sprintf("%s/%s/command", c.topicPrefix, clientName)
-	}
-	// All entities share the global availability topic — only the server
-	// can reliably report online/offline (via LWT), not individual browsers.
-	availTopic := c.availTopic
-
-	device := haDevice{
-		Identifiers:  []string{uniqueIDPrefix},
-		Name:         deviceName,
-		Model:        "Immich Kiosk",
-		Manufacturer: "immich-kiosk",
-	}
-
-	buttons := []struct{ name, payload string }{
-		{"Next image", "next"},
-		{"Previous image", "previous"},
-	}
-
-	for _, b := range buttons {
-		discoveryTopic := fmt.Sprintf("homeassistant/button/%s/%s/config", uniqueIDPrefix, b.payload)
-		cfg := haButtonConfig{
-			Name:              b.name,
-			UniqueID:          uniqueIDPrefix + "-" + b.payload,
-			CommandTopic:      commandTopic,
-			PayloadPress:      b.payload,
-			AvailabilityTopic: availTopic,
-			Device:            device,
-		}
-		payload, err := json.Marshal(cfg)
-		if err != nil {
-			log.Error("MQTT discovery marshal failed", "err", err)
-			continue
-		}
-		client.Publish(discoveryTopic, 1, true, payload)
-	}
-}
-
-// AddHandler registers a handler called when a command is received.
+// AddHandler registers a handler called when a navigation command is received.
 func (c *Client) AddHandler(h Handler) {
 	c.handlersMu.Lock()
 	c.handlers = append(c.handlers, h)
 	c.handlersMu.Unlock()
 }
 
-// messageHandler processes incoming MQTT messages and determines target client.
-func (c *Client) messageHandler(_ pahomqtt.Client, msg pahomqtt.Message) {
-	topic := msg.Topic()
-	payload := strings.TrimSpace(strings.ToLower(string(msg.Payload())))
-	log.Debug("MQTT message received", "topic", topic, "payload", payload)
+// EnableOverride connects the override store and publishes its HA entities.
+func (c *Client) EnableOverride(p OverrideProvider) {
+	c.overrideMu.Lock()
+	c.override = &p
+	c.overrideMu.Unlock()
 
-	// Determine target client from topic structure:
-	// prefix/command          → target = "" (all)
-	// prefix/clientname/command → target = "clientname"
-	var target string
-	withoutPrefix := strings.TrimPrefix(topic, c.topicPrefix+"/")
-	if withoutPrefix != "command" {
-		// format is "<clientname>/command"
-		target = strings.TrimSuffix(withoutPrefix, "/command")
+	c.publishOverrideDiscovery(c.client)
+}
+
+func (c *Client) overrideProvider() *OverrideProvider {
+	c.overrideMu.RLock()
+	defer c.overrideMu.RUnlock()
+	return c.override
+}
+
+// isValidClientName reports whether name is safe as an MQTT topic segment and
+// does not collide with the reserved "override" segment.
+func isValidClientName(name string) bool {
+	if name == "" || name == "_global" || name == "override" {
+		return false
+	}
+	return !strings.ContainsAny(name, "/#+")
+}
+
+// PublishClientDiscovery publishes HA MQTT Discovery for a named client
+// (e.g. "living-room"). Called when a client connects via SSE.
+func (c *Client) PublishClientDiscovery(clientName string) {
+	if !isValidClientName(clientName) {
+		return
+	}
+	c.publishNavDiscovery(c.client, clientName)
+	if p := c.overrideProvider(); p != nil {
+		c.publishOverrideSelects(c.client, p, clientName)
+	}
+	log.Info("MQTT client discovery published", "client", clientName)
+}
+
+// PublishOverrideDiscovery republishes the override selects for the global
+// device and every connected client, e.g. after the asset list changed.
+func (c *Client) PublishOverrideDiscovery() {
+	c.publishOverrideDiscovery(c.client)
+}
+
+// PublishOverrideState publishes the select state for every source of target.
+func (c *Client) PublishOverrideState(target string) {
+	p := c.overrideProvider()
+	if p == nil {
+		return
+	}
+	activeKey, activeName, ok := p.Current(target)
+	for _, src := range p.Sources {
+		state := overrideOff
+		if ok && activeKey == src.Key && activeName != "" {
+			state = activeName
+		}
+		c.client.Publish(c.overrideTopic(target, src.Key, "state"), 1, true, state)
+	}
+}
+
+// overrideTopic builds <prefix>[/<target>]/override/<key>/<leaf>.
+func (c *Client) overrideTopic(target, key, leaf string) string {
+	if target == "" {
+		return fmt.Sprintf("%s/override/%s/%s", c.topicPrefix, key, leaf)
+	}
+	return fmt.Sprintf("%s/%s/override/%s/%s", c.topicPrefix, target, key, leaf)
+}
+
+func (c *Client) device(target string) (string, haDevice) {
+	id, name := c.clientID, "Immich Kiosk (all)"
+	if target != "" {
+		id, name = "immich-kiosk-"+target, "Immich Kiosk - "+target
+	}
+	return id, haDevice{
+		Identifiers:  []string{id},
+		Name:         name,
+		Model:        "Immich Kiosk",
+		Manufacturer: "immich-kiosk",
+	}
+}
+
+// publishNavDiscovery publishes the Next and Previous buttons for target ("" = all clients).
+func (c *Client) publishNavDiscovery(client pahomqtt.Client, target string) {
+	commandTopic := c.topicPrefix + "/command"
+	if target != "" {
+		commandTopic = fmt.Sprintf("%s/%s/command", c.topicPrefix, target)
+	}
+	deviceID, device := c.device(target)
+
+	buttons := []struct{ name, payload string }{
+		{"Next image", string(CommandNext)},
+		{"Previous image", string(CommandPrevious)},
 	}
 
-	var cmd Command
-	switch payload {
-	case string(CommandNext):
-		cmd = CommandNext
-	case string(CommandPrevious):
-		cmd = CommandPrevious
+	for _, b := range buttons {
+		cfg := haButtonConfig{
+			Name:              b.name,
+			UniqueID:          deviceID + "-" + b.payload,
+			CommandTopic:      commandTopic,
+			PayloadPress:      b.payload,
+			AvailabilityTopic: c.availTopic,
+			Device:            device,
+		}
+		c.publishJSON(client, fmt.Sprintf("homeassistant/button/%s/%s/config", deviceID, b.payload), cfg)
+	}
+}
+
+func (c *Client) publishOverrideDiscovery(client pahomqtt.Client) {
+	p := c.overrideProvider()
+	if p == nil {
+		return
+	}
+
+	// Remove entities published by earlier versions of this feature.
+	for _, src := range p.Sources {
+		client.Publish(fmt.Sprintf("homeassistant/button/%s-override-%s-stop/config", c.clientID, src.Key), 1, true, "")
+	}
+
+	c.publishOverrideSelects(client, p, "")
+	for _, name := range p.Clients() {
+		if isValidClientName(name) {
+			c.publishOverrideSelects(client, p, name)
+		}
+	}
+}
+
+// publishOverrideSelects publishes one select per source on target's device
+// ("" = the all-clients device), followed by the current state.
+func (c *Client) publishOverrideSelects(client pahomqtt.Client, p *OverrideProvider, target string) {
+	deviceID, device := c.device(target)
+
+	for _, src := range p.Sources {
+		options := append([]string{overrideOff}, p.AssetNames(src.Key)...)
+
+		cfg := haSelectConfig{
+			Name:              src.Name,
+			UniqueID:          fmt.Sprintf("%s-override-%s-select", deviceID, src.Key),
+			CommandTopic:      c.overrideTopic(target, src.Key, "set"),
+			StateTopic:        c.overrideTopic(target, src.Key, "state"),
+			Options:           options,
+			Icon:              "mdi:image-lock",
+			AvailabilityTopic: c.availTopic,
+			Device:            device,
+		}
+		c.publishJSON(client, fmt.Sprintf("homeassistant/select/%s-override-%s/config", deviceID, src.Key), cfg)
+	}
+
+	c.PublishOverrideState(target)
+}
+
+func (c *Client) publishJSON(client pahomqtt.Client, topic string, v any) {
+	payload, err := json.Marshal(v)
+	if err != nil {
+		log.Error("MQTT discovery marshal failed", "topic", topic, "err", err)
+		return
+	}
+	client.Publish(topic, 1, true, payload)
+}
+
+// topicParts splits a topic below the prefix into its segments.
+func (c *Client) topicParts(topic string) []string {
+	return strings.Split(strings.TrimPrefix(topic, c.topicPrefix+"/"), "/")
+}
+
+// messageHandler processes navigation commands.
+func (c *Client) messageHandler(_ pahomqtt.Client, msg pahomqtt.Message) {
+	payload := strings.TrimSpace(strings.ToLower(string(msg.Payload())))
+	parts := c.topicParts(msg.Topic())
+
+	// prefix/command → all clients; prefix/<client>/command → one client.
+	var target string
+	switch len(parts) {
+	case 1:
+	case 2:
+		target = parts[0]
+		if target == "override" {
+			// prefix/+/command also matches prefix/override/command.
+			return
+		}
 	default:
-		log.Warn("MQTT unknown command", "payload", payload)
+		return
+	}
+
+	cmd := Command(payload)
+	if cmd != CommandNext && cmd != CommandPrevious {
+		log.Warn("MQTT unknown navigation command", "payload", payload)
 		return
 	}
 
@@ -265,4 +407,82 @@ func (c *Client) messageHandler(_ pahomqtt.Client, msg pahomqtt.Message) {
 	for _, h := range handlers {
 		h(cmd, target)
 	}
+}
+
+// overrideCommandHandler processes …/override/command messages:
+//
+//	start <source> [<description or filename>]
+//	stop
+//	refresh-sources [<source>]
+func (c *Client) overrideCommandHandler(_ pahomqtt.Client, msg pahomqtt.Message) {
+	parts := c.topicParts(msg.Topic())
+
+	var target string
+	switch {
+	case len(parts) == 2 && parts[0] == "override":
+	case len(parts) == 3 && parts[1] == "override":
+		target = parts[0]
+	default:
+		return
+	}
+
+	fields := strings.Fields(string(msg.Payload()))
+	if len(fields) == 0 {
+		return
+	}
+
+	cmd := OverrideCommand{Action: OverrideAction(strings.ToLower(fields[0])), Target: target}
+	switch cmd.Action {
+	case OverrideStop:
+	case OverrideRefresh:
+		if len(fields) > 1 {
+			cmd.SourceKey = fields[1]
+		}
+	case OverrideStart:
+		if len(fields) < 2 {
+			log.Warn("MQTT override: start needs a source key", "payload", string(msg.Payload()))
+			return
+		}
+		cmd.SourceKey = fields[1]
+		// Descriptions and filenames may contain spaces.
+		cmd.AssetName = strings.Join(fields[2:], " ")
+	default:
+		log.Warn("MQTT override: unknown command", "payload", string(msg.Payload()))
+		return
+	}
+
+	c.dispatchOverride(cmd)
+}
+
+// overrideSelectHandler processes HA select input on …/override/<source>/set.
+func (c *Client) overrideSelectHandler(_ pahomqtt.Client, msg pahomqtt.Message) {
+	parts := c.topicParts(msg.Topic())
+
+	var target, key string
+	switch {
+	case len(parts) == 3 && parts[0] == "override":
+		key = parts[1]
+	case len(parts) == 4 && parts[1] == "override":
+		target, key = parts[0], parts[2]
+	default:
+		return
+	}
+
+	value := strings.TrimSpace(string(msg.Payload()))
+	cmd := OverrideCommand{Action: OverrideStart, SourceKey: key, AssetName: value, Target: target}
+	if strings.EqualFold(value, overrideOff) {
+		cmd = OverrideCommand{Action: OverrideStop, SourceKey: key, Target: target}
+	}
+
+	c.dispatchOverride(cmd)
+}
+
+func (c *Client) dispatchOverride(cmd OverrideCommand) {
+	p := c.overrideProvider()
+	if p == nil {
+		return
+	}
+	log.Debug("MQTT override command", "action", cmd.Action, "source", cmd.SourceKey, "asset", cmd.AssetName, "target", cmd.Target)
+	// Run off the paho callback goroutine: handling may call the Immich API.
+	go p.Handle(cmd)
 }

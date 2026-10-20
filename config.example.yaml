@@ -191,7 +191,7 @@ kiosk:
   # mqtt_client_id: "immich-kiosk"
   # mqtt_topic_prefix: "immich-kiosk"
   #
-  # Commands are received on:
+  # Navigation commands are received on:
   #   <prefix>/command                    -> all connected clients
   #   <prefix>/<client>/command           -> a specific screen only
   #
@@ -199,3 +199,27 @@ kiosk:
   #   http://kiosk:3000/?client=living-room
   #
   # Home Assistant devices are created automatically via MQTT discovery.
+
+  ## Override - temporarily show a specific image or album via MQTT (e.g. tonight's recipe)
+  #
+  # Only albums listed in override_sources can be shown; nothing else is reachable.
+  # Requires MQTT. Overrides are kept in memory and end after override_max_duration
+  # (or on restart), after which the screen returns to its normal slideshow.
+  #
+  # override_max_duration: 7200          # seconds an override stays active (default: 7200 = 2 h)
+  # override_source_refresh_interval: 5  # minutes between reloading image lists (default: 5)
+  #
+  # override_sources:
+  #   - key: "recipes"                   # identifier used in MQTT topics/payloads
+  #     name: "Kitchen recipes"          # name shown in Home Assistant
+  #     album: "abc123-immich-album-id"  # Immich album UUID
+  #
+  # Home Assistant gets a select per source on the "Immich Kiosk (all)" device and
+  # on each client device (?client=<name>). Pick an image to show it, "off" to stop.
+  # Images are listed by their Immich description, or by filename when it is empty.
+  #
+  # Raw MQTT commands, on <prefix>/override/command (all) or <prefix>/<client>/override/command:
+  #   start <key> <name>          show one image (description or filename)
+  #   start <key>                 show the whole source album
+  #   stop                        end the override
+  #   refresh-sources [<key>]     reload image lists now (e.g. after adding a recipe)
