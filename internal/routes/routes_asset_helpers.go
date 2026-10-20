@@ -406,6 +406,18 @@ func fetchImagePreview(immichAsset *immich.Asset, isOriginal bool, requestID, de
 func processAsset(asset *immich.Asset, requestConfig config.Config, requestID string, deviceID string, requestURL string, isPrefetch bool) (image.Image, error) {
 	var err error
 
+	// A pinned asset (set by an override) skips random selection. If it can no
+	// longer be fetched, fall back to the configured sources.
+	if requestConfig.PinnedAssetID != "" {
+		asset.ID = requestConfig.PinnedAssetID
+		infoErr := asset.AssetInfo(requestID, deviceID)
+		if infoErr == nil {
+			return processImage(asset, requestConfig, requestID, deviceID, isPrefetch)
+		}
+		log.Warn(requestID+" pinned asset unavailable, using override album", "asset", requestConfig.PinnedAssetID, "err", infoErr)
+		asset.ID = ""
+	}
+
 	assets, assetsErr := gatherAssetBuckets(asset, requestConfig, requestID, deviceID)
 	if assetsErr != nil {
 		return nil, assetsErr

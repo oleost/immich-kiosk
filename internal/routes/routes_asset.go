@@ -54,6 +54,9 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
 			return c.NoContent(http.StatusNoContent)
 		}
 
+		// The prefetch cache is keyed by URL and does not know about overrides, so bypass it.
+		overrideActive := applyOverride(&requestConfig, requestData.ClientName)
+
 		// use history
 		if len(requestConfig.History) > 1 && !strings.HasPrefix(requestConfig.History[len(requestConfig.History)-1], "*") {
 			return NextHistoryAsset(baseConfig, com, c)
@@ -62,8 +65,8 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
 		requestCtx := common.CopyContext(c, com.Context())
 		requestCtx.Ctx = com.Context()
 
-		// get and use prefetch data (if found)
-		if requestConfig.Kiosk.PreFetch {
+		// get and use prefetch data (if found) — skip cache when override is active
+		if requestConfig.Kiosk.PreFetch && !overrideActive {
 			if cachedViewData := fromCache(requestCtx.URL.String(), deviceID); cachedViewData != nil {
 				go assetPreFetch(com, requestData, requestCtx)
 				go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, cachedViewData[0])
@@ -79,7 +82,7 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
 			return RenderError(c, err, t("retrieving_asset"), requestConfig.Duration)
 		}
 
-		if requestConfig.Kiosk.PreFetch {
+		if requestConfig.Kiosk.PreFetch && !overrideActive {
 			go assetPreFetch(com, requestData, requestCtx)
 		}
 

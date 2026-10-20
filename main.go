@@ -30,9 +30,9 @@ import (
 	"github.com/damongolding/immich-kiosk/internal/cache"
 	"github.com/damongolding/immich-kiosk/internal/common"
 	"github.com/damongolding/immich-kiosk/internal/config"
-	"github.com/damongolding/immich-kiosk/internal/mqtt"
 	"github.com/damongolding/immich-kiosk/internal/i18n"
 	"github.com/damongolding/immich-kiosk/internal/immich"
+	"github.com/damongolding/immich-kiosk/internal/mqtt"
 	"github.com/damongolding/immich-kiosk/internal/routes"
 	"github.com/damongolding/immich-kiosk/internal/templates/partials"
 	"github.com/damongolding/immich-kiosk/internal/utils"
@@ -167,8 +167,10 @@ func main() {
 		baseConfig.WatchConfig(c.Context(), postConfigReloadFuncs...)
 	}
 
+	var mqttClient *mqtt.Client
 	if baseConfig.Kiosk.MqttEnabled {
-		mqttClient, mqttErr := mqtt.New(c.Context(), baseConfig.Kiosk)
+		var mqttErr error
+		mqttClient, mqttErr = mqtt.New(c.Context(), baseConfig.Kiosk)
 		if mqttErr != nil {
 			log.Error("Failed to connect to MQTT broker", "err", mqttErr)
 		} else {
@@ -176,6 +178,10 @@ func main() {
 			routes.SetNewClientHandler(mqttClient.PublishClientDiscovery)
 			log.Warn("MQTT enabled", "broker", baseConfig.Kiosk.MqttBroker, "topic_prefix", baseConfig.Kiosk.MqttTopicPrefix)
 		}
+	}
+
+	if len(baseConfig.Kiosk.OverrideSources) > 0 {
+		routes.SetupOverride(c.Context(), baseConfig, mqttClient)
 	}
 
 	if baseConfig.Kiosk.Debug {

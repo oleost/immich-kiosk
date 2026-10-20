@@ -51,6 +51,31 @@ Upstream only publishes on version tags.
 
 - `.github/workflows/docker-publish.yml`
 
+### 4. Timed override via MQTT (`feat: add timed album override via MQTT`)
+
+Temporarily replaces the slideshow on all screens or one screen (e.g. show a
+recipe for two hours). Builds on the MQTT feature (1).
+
+- Only albums listed in `kiosk.override_sources` can be shown.
+- Each source becomes a Home Assistant `select` on the "all" device and on each
+  client device; options are each image's Immich description (filename when
+  the description is empty or duplicated) plus `off`.
+- Image lists are loaded via Immich's search API and refreshed every
+  `override_source_refresh_interval` minutes, or on `refresh-sources`.
+- Overrides live in memory and expire after `override_max_duration`; the screen
+  is told to move on immediately on start, stop and expiry.
+- While an override is active the prefetch cache is bypassed (its key does not
+  include override state).
+
+Files:
+- `internal/override/override.go` (new), `internal/routes/routes_override.go` (new)
+- `internal/mqtt/mqtt.go` (+ `mqtt_test.go`)
+- `internal/routes/routes_asset.go`, `internal/routes/routes_asset_helpers.go`
+  (`PinnedAssetID` short-circuit in `processAsset`, falls back to the album
+  if the pinned image is gone)
+- `internal/config/config.go`, `config.example.yaml`, `config.schema.json`
+- `main.go`
+
 ## Previously carried, now upstream
 
 - **Offline fallback / auto-reconnect for the installed PWA.** Dropped when

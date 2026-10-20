@@ -186,6 +186,24 @@ type KioskSettings struct {
 	MqttClientID string `json:"mqttClientId" yaml:"mqtt_client_id" mapstructure:"mqtt_client_id" default:"immich-kiosk"`
 	// MqttTopicPrefix is the MQTT topic prefix. Commands are received on <prefix>/command
 	MqttTopicPrefix string `json:"mqttTopicPrefix" yaml:"mqtt_topic_prefix" mapstructure:"mqtt_topic_prefix" default:"immich-kiosk"`
+
+	// OverrideSources are the only albums that may be shown as a timed override via MQTT.
+	OverrideSources []OverrideSource `json:"overrideSources" yaml:"override_sources" mapstructure:"override_sources" default:"[]"`
+	// OverrideMaxDuration is how many seconds an override stays active (default 2 h).
+	OverrideMaxDuration int `json:"overrideMaxDuration" yaml:"override_max_duration" mapstructure:"override_max_duration" default:"7200"`
+	// OverrideSourceRefreshInterval is how often (minutes) the override image lists are
+	// reloaded from Immich. 0 = only at startup and on the refresh-sources command.
+	OverrideSourceRefreshInterval int `json:"overrideSourceRefreshInterval" yaml:"override_source_refresh_interval" mapstructure:"override_source_refresh_interval" default:"5"`
+}
+
+// OverrideSource defines a named album source that can be activated as a kiosk override via MQTT.
+type OverrideSource struct {
+	// Key is the short identifier used in MQTT payloads, e.g. "oppskrifter".
+	Key string `json:"key" yaml:"key" mapstructure:"key"`
+	// Name is the human-readable label shown in Home Assistant.
+	Name string `json:"name" yaml:"name" mapstructure:"name"`
+	// Album is the Immich album UUID to display when this source is active.
+	Album string `json:"album" yaml:"album" mapstructure:"album" redact:"true"`
 }
 
 type WeatherConfig struct {
@@ -305,6 +323,10 @@ type Config struct {
 
 	// ClientData data sent from the client with data regarding itself
 	ClientData ClientData `yaml:"-"`
+
+	// PinnedAssetID pins the kiosk to display a single specific Immich asset.
+	// Set programmatically by the override system; never exposed via YAML or URL params.
+	PinnedAssetID string `json:"-" yaml:"-"`
 
 	// ImmichAPIKey Immich key to access assets
 	ImmichAPIKey string `json:"-" msgpack:"-" yaml:"immich_api_key" mapstructure:"immich_api_key" default:"" redact:"true"`
