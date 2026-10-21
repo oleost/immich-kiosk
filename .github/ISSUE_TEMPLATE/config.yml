@@ -1,5 +1,5 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
-  - name: Feature Request
-    url: https://github.com/damongolding/immich-kiosk/discussions/new?category=feature-request
-    about: Please use our GitHub Discussion for making feature requests.
+  - name: Upstream Immich Kiosk documentation
+    url: https://docs.immichkiosk.app
+    about: General Kiosk setup and settings. Issues here are only for the features this fork adds (see MQTT.md).

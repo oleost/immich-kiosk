@@ -62,9 +62,11 @@ recipe for two hours). Builds on the MQTT feature (1).
 - Only albums listed in `kiosk.override_sources` can be shown.
 - Each source becomes a Home Assistant `select` on the "all" device and on each
   client device; options are each image's Immich description (filename when
-  the description is empty or duplicated) plus `off`.
-- Image lists are loaded via Immich's search API and refreshed every
-  `override_source_refresh_interval` minutes, or on `refresh-sources`.
+  the description is empty or duplicated) plus `off`. Raw `start` commands
+  match the description first, then the filename.
+- Image lists are loaded via Immich's search API (trashed images skipped) and
+  refreshed every `override_source_refresh_interval` minutes, or on
+  `refresh-sources`.
 - Overrides live in memory and expire after `override_max_duration`; the screen
   is told to move on immediately on start, stop and expiry.
 - While an override is active the prefetch cache is bypassed (its key does not
@@ -79,14 +81,7 @@ Files:
 - `internal/config/config.go`, `config.example.yaml`, `config.schema.json`
 - `main.go`
 
-### 5. Override labels from Immich descriptions (`feat: label override images by Immich description`)
-
-The override select lists each image by its Immich description, falling back
-to the filename. Raw `start` commands match the label first, then the filename.
-
-- `internal/override/override.go`, `internal/routes/routes_override.go`
-
-### 6. Timed text messages via MQTT (`feat: show timed text messages via MQTT`)
+### 5. Timed text messages via MQTT (`feat: show timed text messages via MQTT`)
 
 Shows a text banner on top of the slideshow on all screens or one screen.
 Builds on the MQTT feature (1).
@@ -109,7 +104,7 @@ Files:
   `frontend/src/ts/mqtt-sse.ts`, `frontend/src/css/kiosk.css` (import)
 - `config.example.yaml`, `main.go`
 
-### 7. HA entity polish and override duration (`feat: add override duration and tidy Home Assistant entities`)
+### 6. HA entity polish and override duration (`feat: add override duration and tidy Home Assistant entities`)
 
 - Text and duration fields get a default state (empty text, 5 min) when no
   retained state exists, so Home Assistant no longer shows them as "unknown".
@@ -128,13 +123,25 @@ Files:
 - `internal/override/override.go`, `internal/routes/routes_override.go`
 - `internal/config/config.go`, `config.example.yaml`
 
-### 8. User guide (`docs: add MQTT and Home Assistant user guide`)
+### 7. User guide (`docs: add MQTT and Home Assistant user guide`)
 
 `MQTT.md` explains setup, screen names, the HA entities, text messages,
 override, HA automation examples and the topic reference. The schema now
 rejects the reserved override source key `duration`.
 
 - `MQTT.md` (new), `FORK.md`, `config.example.yaml`, `config.schema.json`
+
+### 8. Fork README (`docs: add fork README`)
+
+`.github/README.md` is the README GitHub shows for this fork (it takes
+precedence over the root `README.md`, which stays identical to upstream so
+rebases never conflict on it). It marks the fork as unofficial and AI-assisted,
+lists the additions, and credits upstream.
+
+- `.github/README.md` (new), `FORK.md`
+- `.github/ISSUE_TEMPLATE/config.yml`: blank issues allowed, and the upstream
+  "Feature Request" discussion link replaced with the upstream docs (issues are
+  enabled on the fork)
 
 ## Previously carried, now upstream
 
