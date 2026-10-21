@@ -3,6 +3,9 @@
 This is a fork of [damongolding/immich-kiosk](https://github.com/damongolding/immich-kiosk).
 It tracks upstream closely and carries a small set of extra changes on top.
 
+**Using the fork features** (MQTT, Home Assistant, text messages, override):
+see [MQTT.md](MQTT.md). This file describes the changes for maintaining the fork.
+
 ## How this fork stays in sync with upstream
 
 `main` is kept as **`upstream/main` + the fork commits listed below**, applied by
@@ -124,6 +127,14 @@ Files:
 - `internal/mqtt/drafts.go` (new), `internal/mqtt/message.go`, `internal/mqtt/mqtt.go`
 - `internal/override/override.go`, `internal/routes/routes_override.go`
 - `internal/config/config.go`, `config.example.yaml`
+
+### 8. User guide (`docs: add MQTT and Home Assistant user guide`)
+
+`MQTT.md` explains setup, screen names, the HA entities, text messages,
+override, HA automation examples and the topic reference. The schema now
+rejects the reserved override source key `duration`.
+
+- `MQTT.md` (new), `FORK.md`, `config.example.yaml`, `config.schema.json`
 
 ## Previously carried, now upstream
 
