@@ -76,6 +76,36 @@ Files:
 - `internal/config/config.go`, `config.example.yaml`, `config.schema.json`
 - `main.go`
 
+### 5. Override labels from Immich descriptions (`feat: label override images by Immich description`)
+
+The override select lists each image by its Immich description, falling back
+to the filename. Raw `start` commands match the label first, then the filename.
+
+- `internal/override/override.go`, `internal/routes/routes_override.go`
+
+### 6. Timed text messages via MQTT (`feat: show timed text messages via MQTT`)
+
+Shows a text banner on top of the slideshow on all screens or one screen.
+Builds on the MQTT feature (1).
+
+- Each HA device gets a `text` (message), a `number` (duration in minutes) and
+  `Show message` / `Clear message` buttons. The text and duration are kept as
+  retained MQTT states, so they survive a restart.
+- Raw commands on `<prefix>[/<client>]/message/command`: `show`, `clear`, plain
+  text, or JSON with `text`, `duration`, `position`, `size`.
+- Messages live in memory, expire after their duration, and are sent to the
+  browser as a `kiosk-message` event on `/events`, including on (re)connect so
+  a reload keeps the message. The text is rendered with `textContent`.
+- `message` is reserved as a client name, like `override`.
+
+Files:
+- `internal/message/message.go` (new), `internal/routes/routes_message.go` (new)
+- `internal/mqtt/message.go` (new), `internal/mqtt/mqtt.go`
+- `internal/routes/routes_mqtt_sse.go` (events carry a name)
+- `frontend/src/ts/mqtt-message.ts`, `frontend/src/css/kiosk-message.css` (new),
+  `frontend/src/ts/mqtt-sse.ts`, `frontend/src/css/kiosk.css` (import)
+- `config.example.yaml`, `main.go`
+
 ## Previously carried, now upstream
 
 - **Offline fallback / auto-reconnect for the installed PWA.** Dropped when

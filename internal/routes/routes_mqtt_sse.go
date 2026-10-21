@@ -40,9 +40,21 @@ func validSSEClientName(name string) string {
 
 // sseHub manages all active SSE client connections grouped by client name.
 var sseHub = &SSEHub{
-	clients:      make(map[string]map[chan string]struct{}),
+	clients:      make(map[string]map[chan sseEvent]struct{}),
 	knownClients: make(map[string]struct{}),
 	pending:      make(map[string]pendingCmd),
+}
+
+// SSE event names sent on /events.
+const (
+	sseEventCommand = "kiosk-command"
+	sseEventMessage = "kiosk-message"
+)
+
+// sseEvent is one event sent to a client on /events.
+type sseEvent struct {
+	name string
+	data string
 }
 
 // pendingCmd holds a command that arrived when no client was connected.
@@ -55,10 +67,10 @@ type pendingCmd struct {
 // broadcasts events to them.
 type SSEHub struct {
 	mu           sync.RWMutex
-	clients      map[string]map[chan string]struct{} // clientName -> set of channels
-	knownClients map[string]struct{}                 // clients that have had HA discovery published
-	pending      map[string]pendingCmd               // commands waiting for a client to reconnect
-	onNewClient  func(clientName string)             // called the first time a named client connects
+	clients      map[string]map[chan sseEvent]struct{} // clientName -> set of channels
+	knownClients map[string]struct{}                   // clients that have had HA discovery published
+	pending      map[string]pendingCmd                 // commands waiting for a client to reconnect
+	onNewClient  func(clientName string)               // called the first time a named client connects
 }
 
 // SetNewClientHandler registers a function to call when a new named client
@@ -71,13 +83,13 @@ func (h *SSEHub) SetNewClientHandler(fn func(string)) {
 
 // subscribe registers a new SSE channel for the given client name and
 // delivers any queued command that arrived while the client was disconnected.
-func (h *SSEHub) subscribe(clientName string) chan string {
-	ch := make(chan string, 4)
+func (h *SSEHub) subscribe(clientName string) chan sseEvent {
+	ch := make(chan sseEvent, 4)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	if h.clients[clientName] == nil {
-		h.clients[clientName] = make(map[chan string]struct{})
+		h.clients[clientName] = make(map[chan sseEvent]struct{})
 	}
 	h.clients[clientName][ch] = struct{}{}
 
@@ -89,14 +101,14 @@ func (h *SSEHub) subscribe(clientName string) chan string {
 	if p, ok := h.pending[clientName]; ok {
 		if now.Before(p.expires) {
 			select {
-			case ch <- p.event:
+			case ch <- sseEvent{sseEventCommand, p.event}:
 			default:
 			}
 		}
 		delete(h.pending, clientName)
 	} else if p, ok := h.pending[""]; ok && now.Before(p.expires) {
 		select {
-		case ch <- p.event:
+		case ch <- sseEvent{sseEventCommand, p.event}:
 		default:
 		}
 		// Do NOT delete pending[""] — other clients need it too.
@@ -112,7 +124,7 @@ func (h *SSEHub) subscribe(clientName string) chan string {
 }
 
 // unsubscribe removes a channel from the hub.
-func (h *SSEHub) unsubscribe(clientName string, ch chan string) {
+func (h *SSEHub) unsubscribe(clientName string, ch chan sseEvent) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.clients[clientName], ch)
@@ -136,9 +148,9 @@ func (h *SSEHub) broadcast(target, event string) {
 	}
 
 	// send attempts a non-blocking channel send and returns true if delivered.
-	send := func(ch chan string) bool {
+	send := func(ch chan sseEvent) bool {
 		select {
-		case ch <- event:
+		case ch <- sseEvent{sseEventCommand, event}:
 			return true
 		default:
 			return false
@@ -173,6 +185,26 @@ func (h *SSEHub) broadcast(target, event string) {
 	}
 }
 
+// sendEach sends each client of target ("" = all clients) the event returned by
+// eventFor for its client name. Nothing is queued for disconnected clients.
+func (h *SSEHub) sendEach(target string, eventFor func(clientName string) sseEvent) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for name, channels := range h.clients {
+		if target != "" && name != target {
+			continue
+		}
+		ev := eventFor(name)
+		for ch := range channels {
+			select {
+			case ch <- ev:
+			default:
+			}
+		}
+	}
+}
+
 // SetNewClientHandler wires up a callback for when a new named client connects.
 func SetNewClientHandler(fn func(string)) {
 	sseHub.SetNewClientHandler(fn)
@@ -188,8 +220,8 @@ func MQTTCommandHandler() mqtt.Handler {
 }
 
 // SSEEvents is an Echo handler that keeps an SSE connection open and streams
-// navigation commands to the browser. Pass ?client=<name> in the URL to
-// register the connection under a specific client name.
+// navigation commands and text messages to the browser. Pass ?client=<name> in
+// the URL to register the connection under a specific client name.
 //
 // A heartbeat comment is sent periodically to prevent proxies and iOS from
 // closing the idle connection.
@@ -215,6 +247,10 @@ func SSEEvents(_ *config.Config) echo.HandlerFunc {
 		defer sseHub.unsubscribe(clientName, ch)
 
 		fmt.Fprintf(w, ": connected client=%s\n\n", clientName)
+		// Show a message that is still active after a reload or reconnect.
+		if ev, ok := messageEvent(clientName); ok {
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.name, ev.data)
+		}
 		flusher.Flush()
 
 		heartbeat := time.NewTicker(mqttSSEHeartbeatInterval)
@@ -231,7 +267,7 @@ func SSEEvents(_ *config.Config) echo.HandlerFunc {
 				if !ok {
 					return nil
 				}
-				fmt.Fprintf(w, "event: kiosk-command\ndata: %s\n\n", event)
+				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.name, event.data)
 				flusher.Flush()
 			}
 		}

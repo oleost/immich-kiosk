@@ -176,6 +176,7 @@ func main() {
 		} else {
 			mqttClient.AddHandler(routes.MQTTCommandHandler())
 			routes.SetNewClientHandler(mqttClient.PublishClientDiscovery)
+			routes.SetupMessages(c.Context(), mqttClient)
 			log.Warn("MQTT enabled", "broker", baseConfig.Kiosk.MqttBroker, "topic_prefix", baseConfig.Kiosk.MqttTopicPrefix)
 		}
 	}
