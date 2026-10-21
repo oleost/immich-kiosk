@@ -687,7 +687,7 @@
         },
         "override_max_duration": {
           "type": "integer",
-          "description": "Maximum override duration in seconds (default 7200 = 2 hours)"
+          "description": "Default and longest override duration in seconds (default 7200 = 2 hours)"
         },
         "override_source_refresh_interval": {
           "type": "integer",
@@ -699,7 +699,7 @@
           "items": {
             "type": "object",
             "properties": {
-              "key":   { "type": "string", "description": "Short identifier used in MQTT commands" },
+              "key":   { "type": "string", "description": "Short identifier used in MQTT commands (\"duration\" is reserved)", "not": { "const": "duration" } },
               "name":  { "type": "string", "description": "Human-readable name shown in Home Assistant" },
               "album": { "type": "string", "description": "Immich album UUID" }
             },

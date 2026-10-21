@@ -183,6 +183,7 @@ kiosk:
   asset_weighting: true # use weighting when picking assets
 
   ## MQTT - remote control via e.g. Home Assistant
+  # Full guide with Home Assistant examples: MQTT.md
   # mqtt_enabled: false
   # mqtt_broker: "192.168.1.100"   # IP or hostname of the MQTT broker
   # mqtt_port: 1883
@@ -191,14 +192,17 @@ kiosk:
   # mqtt_client_id: "immich-kiosk"
   # mqtt_topic_prefix: "immich-kiosk"
   #
-  # Navigation commands are received on:
+  # Navigation commands ("next" or "previous") are received on:
   #   <prefix>/command                    -> all connected clients
   #   <prefix>/<client>/command           -> a specific screen only
   #
   # Open the kiosk with ?client=<name> in the URL to enable per-screen control:
   #   http://kiosk:3000/?client=living-room
+  # Names: letters, digits, "-" and "_" (max 32); "override" and "message" are reserved.
   #
-  # Home Assistant devices are created automatically via MQTT discovery.
+  # Home Assistant devices are created automatically via MQTT discovery: "Immich Kiosk (all)"
+  # and one "Immich Kiosk - <client>" per named screen, each with "Image: next" /
+  # "Image: previous" buttons.
 
   ## Text messages - show a timed text on top of the slideshow (enabled with MQTT)
   #
