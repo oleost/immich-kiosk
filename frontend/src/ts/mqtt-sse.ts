@@ -1,10 +1,12 @@
 /**
  * mqtt-sse.ts
  * Listens to the /events SSE endpoint and translates incoming MQTT navigation
- * commands into the HTMX events that the kiosk already understands.
+ * commands into the HTMX events that the kiosk already understands, and shows
+ * MQTT text messages.
  */
 
 import htmx from "htmx.org";
+import { handleMessageEvent } from "./mqtt-message";
 
 type KioskCommand = "next" | "previous";
 
@@ -40,6 +42,10 @@ export function initMqttSSE(): void {
             default:
                 console.warn("immich-kiosk: unknown MQTT command:", cmd);
         }
+    });
+
+    evtSource.addEventListener("kiosk-message", (e: MessageEvent) => {
+        handleMessageEvent(e.data as string);
     });
 
     evtSource.onerror = () => {

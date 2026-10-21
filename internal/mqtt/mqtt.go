@@ -15,6 +15,10 @@
 //	<prefix>/<client>/override/<source>/set   – HA select input (one client)
 //	<prefix>/override/<source>/state          – HA select state (all clients)
 //	<prefix>/<client>/override/<source>/state – HA select state (one client)
+//	<prefix>[/<client>]/message/command       – text message command
+//	<prefix>[/<client>]/message/text/set      – HA text input (message text)
+//	<prefix>[/<client>]/message/duration/set  – HA number input (minutes)
+//	<prefix>[/<client>]/message/<field>/state – HA text/number state
 //	<prefix>/status                           – availability (online/offline)
 package mqtt
 
@@ -90,6 +94,10 @@ type Client struct {
 
 	override   *OverrideProvider
 	overrideMu sync.RWMutex
+
+	messageHandle func(cmd MessageCommand)
+	messageDrafts map[string]messageDraft
+	messageMu     sync.RWMutex
 }
 
 type haDevice struct {
@@ -104,6 +112,7 @@ type haButtonConfig struct {
 	UniqueID          string   `json:"unique_id"`
 	CommandTopic      string   `json:"command_topic"`
 	PayloadPress      string   `json:"payload_press"`
+	Icon              string   `json:"icon,omitempty"`
 	AvailabilityTopic string   `json:"availability_topic"`
 	Device            haDevice `json:"device"`
 }
@@ -161,6 +170,9 @@ func New(ctx context.Context, settings config.KioskSettings) (*Client, error) {
 
 		c.subscribe(client, prefix+"/command", c.messageHandler)
 		c.subscribe(client, prefix+"/+/command", c.messageHandler)
+
+		c.subscribeMessages(client)
+		c.publishMessageDiscovery(client, "")
 
 		if subscribeOverride {
 			c.subscribe(client, prefix+"/override/command", c.overrideCommandHandler)
@@ -229,9 +241,9 @@ func (c *Client) overrideProvider() *OverrideProvider {
 }
 
 // isValidClientName reports whether name is safe as an MQTT topic segment and
-// does not collide with the reserved "override" segment.
+// does not collide with the reserved "override" and "message" segments.
 func isValidClientName(name string) bool {
-	if name == "" || name == "_global" || name == "override" {
+	if name == "" || name == "_global" || name == "override" || name == "message" {
 		return false
 	}
 	return !strings.ContainsAny(name, "/#+")
@@ -244,6 +256,7 @@ func (c *Client) PublishClientDiscovery(clientName string) {
 		return
 	}
 	c.publishNavDiscovery(c.client, clientName)
+	c.publishMessageDiscovery(c.client, clientName)
 	if p := c.overrideProvider(); p != nil {
 		c.publishOverrideSelects(c.client, p, clientName)
 	}
@@ -387,8 +400,8 @@ func (c *Client) messageHandler(_ pahomqtt.Client, msg pahomqtt.Message) {
 	case 1:
 	case 2:
 		target = parts[0]
-		if target == "override" {
-			// prefix/+/command also matches prefix/override/command.
+		if target == "override" || target == "message" {
+			// prefix/+/command also matches prefix/override/command and prefix/message/command.
 			return
 		}
 	default:

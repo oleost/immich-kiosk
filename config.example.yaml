@@ -200,6 +200,22 @@ kiosk:
   #
   # Home Assistant devices are created automatically via MQTT discovery.
 
+  ## Text messages - show a timed text on top of the slideshow (enabled with MQTT)
+  #
+  # Each Home Assistant device ("all" and each client) gets a "Message text" box,
+  # a "Message duration" (minutes) and "Show message" / "Clear message" buttons.
+  # Messages are kept in memory; a new message replaces the current one.
+  # A client's own message takes priority over one sent to all clients.
+  #
+  # Raw MQTT commands, on <prefix>/message/command (all) or <prefix>/<client>/message/command:
+  #   show                        show the text from the "Message text" box
+  #   clear                       remove the message
+  #   <any other text>            show that text for the set duration
+  #   {"text": "Dinner!", "duration": 10, "position": "top", "size": "large"}
+  #     duration: minutes; position: bottom (default), top, center;
+  #     size: small, medium (default), large
+  # "\n" in the text becomes a line break. Style with custom CSS via .kiosk-message.
+
   ## Override - temporarily show a specific image or album via MQTT (e.g. tonight's recipe)
   #
   # Only albums listed in override_sources can be shown; nothing else is reachable.

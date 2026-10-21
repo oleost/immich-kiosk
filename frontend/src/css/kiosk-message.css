@@ -1,0 +1,61 @@
+/* --- MQTT text message --- */
+.kiosk-message {
+    position: fixed;
+    left: 50%;
+    z-index: calc(var(--z-interaction) + 50);
+    box-sizing: border-box;
+    max-width: 90vw;
+    padding: 0.75em 1.25em;
+    font-weight: 600;
+    line-height: 1.25;
+    color: #fff;
+    text-align: center;
+    overflow-wrap: anywhere;
+    white-space: pre-line;
+    pointer-events: none;
+    background-color: rgba(0, 0, 0, 0.65);
+    border-radius: 0.75rem;
+    box-shadow: 0 0.25rem 1.5rem rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    transform: translateX(-50%);
+    transition: opacity 0.4s ease;
+}
+
+.kiosk-message--visible {
+    opacity: 1;
+}
+
+.kiosk-message--position-bottom {
+    bottom: 3rem;
+}
+
+.kiosk-message--position-top {
+    top: 3rem;
+}
+
+.kiosk-message--position-center {
+    top: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.kiosk-message--size-small {
+    font-size: 1.5rem;
+}
+
+.kiosk-message--size-medium {
+    font-size: 2.5rem;
+}
+
+.kiosk-message--size-large {
+    font-size: 4rem;
+}
+
+@media (max-width: 768px) {
+    .kiosk-message--size-medium {
+        font-size: 1.75rem;
+    }
+
+    .kiosk-message--size-large {
+        font-size: 2.5rem;
+    }
+}
