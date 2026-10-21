@@ -1,6 +1,7 @@
 package mqtt
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -17,7 +18,7 @@ func (m fakeMessage) Ack()              {}
 
 func newTestClient(got chan OverrideCommand) *Client {
 	c := &Client{topicPrefix: "kiosk"}
-	c.override = &OverrideProvider{Handle: func(cmd OverrideCommand) { got <- cmd }}
+	c.override = &OverrideProvider{MaxDuration: 2 * time.Hour, Handle: func(cmd OverrideCommand) { got <- cmd }}
 	return c
 }
 
@@ -38,7 +39,7 @@ func TestOverrideCommandHandler(t *testing.T) {
 		wantNone       bool
 	}{
 		{"kiosk/override/command", "start recipes Lasagne Bolognese.jpg",
-			OverrideCommand{Action: OverrideStart, SourceKey: "recipes", AssetName: "Lasagne Bolognese.jpg"}, false},
+			OverrideCommand{Action: OverrideStart, SourceKey: "recipes", AssetName: "Lasagne Bolognese.jpg", Duration: 2 * time.Hour}, false},
 		{"kiosk/ipad/override/command", "STOP",
 			OverrideCommand{Action: OverrideStop, Target: "ipad"}, false},
 		{"kiosk/override/command", "refresh-sources recipes",
@@ -69,7 +70,7 @@ func TestOverrideSelectHandler(t *testing.T) {
 		want           OverrideCommand
 	}{
 		{"kiosk/override/recipes/set", "Pizza.jpg",
-			OverrideCommand{Action: OverrideStart, SourceKey: "recipes", AssetName: "Pizza.jpg"}},
+			OverrideCommand{Action: OverrideStart, SourceKey: "recipes", AssetName: "Pizza.jpg", Duration: 2 * time.Hour}},
 		{"kiosk/ipad/override/recipes/set", "off",
 			OverrideCommand{Action: OverrideStop, SourceKey: "recipes", Target: "ipad"}},
 	}
@@ -80,6 +81,25 @@ func TestOverrideSelectHandler(t *testing.T) {
 		if cmd, ok := receive(t, got); !ok || cmd != tt.want {
 			t.Errorf("%s %q: got %+v, want %+v", tt.topic, tt.payload, cmd, tt.want)
 		}
+	}
+}
+
+func TestOverrideDuration(t *testing.T) {
+	got := make(chan OverrideCommand, 1)
+	c := newTestClient(got)
+
+	// Restored from retained states; values above the maximum are capped.
+	c.overrideStateHandler(nil, fakeMessage{"kiosk/ipad/override/duration/state", "30"})
+	c.overrideStateHandler(nil, fakeMessage{"kiosk/override/duration/state", "999"})
+
+	c.overrideSelectHandler(nil, fakeMessage{"kiosk/ipad/override/recipes/set", "Pizza.jpg"})
+	if cmd, _ := receive(t, got); cmd.Duration != 30*time.Minute {
+		t.Errorf("ipad duration = %v, want 30m", cmd.Duration)
+	}
+
+	c.overrideCommandHandler(nil, fakeMessage{"kiosk/override/command", "start recipes"})
+	if cmd, _ := receive(t, got); cmd.Duration != 2*time.Hour {
+		t.Errorf("global duration = %v, want 2h (capped)", cmd.Duration)
 	}
 }
 
@@ -95,5 +115,23 @@ func TestNavigationIgnoresOverrideTopic(t *testing.T) {
 	want := []string{"next@ipad", "previous@"}
 	if len(calls) != len(want) || calls[0] != want[0] || calls[1] != want[1] {
 		t.Errorf("got %v, want %v", calls, want)
+	}
+}
+
+func TestOverrideTargetsIncludeSeenClients(t *testing.T) {
+	c := newTestClient(make(chan OverrideCommand, 1))
+	c.override.Clients = func() []string { return []string{"ipad"} }
+
+	// Retained states of clients that are not connected.
+	c.overrideStateHandler(nil, fakeMessage{"kiosk/pc/override/recipes/state", "off"})
+	c.overrideStateHandler(nil, fakeMessage{"kiosk/ipad/override/duration/state", "30"})
+	c.overrideStateHandler(nil, fakeMessage{"kiosk/override/recipes/state", "off"})
+
+	got := c.overrideTargets(c.override)
+	if want := []string{"ipad", "pc"}; !slices.Equal(got, want) {
+		t.Errorf("targets = %v, want %v", got, want)
+	}
+	if d := c.draftDuration("pc", fieldOverrideDuration); d != 2*time.Hour {
+		t.Errorf("pc duration = %v, want the 2h default", d)
 	}
 }

@@ -89,7 +89,7 @@ Shows a text banner on top of the slideshow on all screens or one screen.
 Builds on the MQTT feature (1).
 
 - Each HA device gets a `text` (message), a `number` (duration in minutes) and
-  `Show message` / `Clear message` buttons. The text and duration are kept as
+  `Message: send` / `Message: stop` buttons. The text and duration are kept as
   retained MQTT states, so they survive a restart.
 - Raw commands on `<prefix>[/<client>]/message/command`: `show`, `clear`, plain
   text, or JSON with `text`, `duration`, `position`, `size`.
@@ -105,6 +105,25 @@ Files:
 - `frontend/src/ts/mqtt-message.ts`, `frontend/src/css/kiosk-message.css` (new),
   `frontend/src/ts/mqtt-sse.ts`, `frontend/src/css/kiosk.css` (import)
 - `config.example.yaml`, `main.go`
+
+### 7. HA entity polish and override duration (`feat: add override duration and tidy Home Assistant entities`)
+
+- Text and duration fields get a default state (empty text, 5 min) when no
+  retained state exists, so Home Assistant no longer shows them as "unknown".
+  Stored values are republished when Home Assistant restarts
+  (`homeassistant/status` = `online`).
+- New `Override: duration` number (minutes) per device; `override_max_duration`
+  is now its default and maximum. Topic `<prefix>[/<client>]/override/duration/set`,
+  so `duration` is a reserved source key.
+- Clients are also learned from their retained override states, so a screen
+  that is not connected still gets the new image list when it changes.
+- Entity names are prefixed (`Image:`, `Message:`, `Override:`) so they group
+  on the device page; text and duration inputs use `entity_category: config`.
+
+Files:
+- `internal/mqtt/drafts.go` (new), `internal/mqtt/message.go`, `internal/mqtt/mqtt.go`
+- `internal/override/override.go`, `internal/routes/routes_override.go`
+- `internal/config/config.go`, `config.example.yaml`
 
 ## Previously carried, now upstream
 

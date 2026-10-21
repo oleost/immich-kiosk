@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -48,13 +47,6 @@ type MessageCommand struct {
 	Size     string
 }
 
-// messageDraft is the text and duration set in Home Assistant for one target,
-// used when the "Show message" button is pressed.
-type messageDraft struct {
-	text    string
-	minutes float64
-}
-
 // messageJSON is the JSON form of a raw message command.
 type messageJSON struct {
 	Text     string  `json:"text"`
@@ -71,6 +63,7 @@ type haTextConfig struct {
 	Max               int      `json:"max"`
 	Mode              string   `json:"mode"`
 	Icon              string   `json:"icon,omitempty"`
+	EntityCategory    string   `json:"entity_category,omitempty"`
 	AvailabilityTopic string   `json:"availability_topic"`
 	Device            haDevice `json:"device"`
 }
@@ -86,6 +79,7 @@ type haNumberConfig struct {
 	Mode              string   `json:"mode"`
 	UnitOfMeasurement string   `json:"unit_of_measurement"`
 	Icon              string   `json:"icon,omitempty"`
+	EntityCategory    string   `json:"entity_category,omitempty"`
 	AvailabilityTopic string   `json:"availability_topic"`
 	Device            haDevice `json:"device"`
 }
@@ -96,14 +90,6 @@ func (c *Client) EnableMessages(handle func(cmd MessageCommand)) {
 	c.messageMu.Lock()
 	c.messageHandle = handle
 	c.messageMu.Unlock()
-}
-
-// messageTopic builds <prefix>[/<target>]/message/<leaf>.
-func (c *Client) messageTopic(target, leaf string) string {
-	if target == "" {
-		return fmt.Sprintf("%s/message/%s", c.topicPrefix, leaf)
-	}
-	return fmt.Sprintf("%s/%s/message/%s", c.topicPrefix, target, leaf)
 }
 
 func (c *Client) subscribeMessages(client pahomqtt.Client) {
@@ -123,50 +109,54 @@ func (c *Client) publishMessageDiscovery(client pahomqtt.Client, target string) 
 	deviceID, device := c.device(target)
 
 	c.publishJSON(client, fmt.Sprintf("homeassistant/text/%s-message/config", deviceID), haTextConfig{
-		Name:              "Message text",
+		Name:              "Message: content",
 		UniqueID:          deviceID + "-message-text",
-		CommandTopic:      c.messageTopic(target, "text/set"),
-		StateTopic:        c.messageTopic(target, "text/state"),
+		CommandTopic:      c.draftTopic(target, fieldMessageText, "set"),
+		StateTopic:        c.draftTopic(target, fieldMessageText, "state"),
 		Max:               messageTextMax,
 		Mode:              "text",
 		Icon:              "mdi:message-text",
+		EntityCategory:    "config",
 		AvailabilityTopic: c.availTopic,
 		Device:            device,
 	})
 
 	c.publishJSON(client, fmt.Sprintf("homeassistant/number/%s-message-duration/config", deviceID), haNumberConfig{
-		Name:              "Message duration",
+		Name:              "Message: duration",
 		UniqueID:          deviceID + "-message-duration",
-		CommandTopic:      c.messageTopic(target, "duration/set"),
-		StateTopic:        c.messageTopic(target, "duration/state"),
+		CommandTopic:      c.draftTopic(target, fieldMessageDuration, "set"),
+		StateTopic:        c.draftTopic(target, fieldMessageDuration, "state"),
 		Min:               1,
 		Max:               messageMaxMinutes,
 		Step:              1,
 		Mode:              "box",
 		UnitOfMeasurement: "min",
 		Icon:              "mdi:timer-outline",
+		EntityCategory:    "config",
 		AvailabilityTopic: c.availTopic,
 		Device:            device,
 	})
 
 	buttons := []struct{ name, payload, icon string }{
-		{"Show message", string(MessageShow), "mdi:message-arrow-right"},
-		{"Clear message", string(MessageClear), "mdi:message-off"},
+		{"Message: send", string(MessageShow), "mdi:message-arrow-right"},
+		{"Message: stop", string(MessageClear), "mdi:message-off"},
 	}
 	for _, b := range buttons {
 		c.publishJSON(client, fmt.Sprintf("homeassistant/button/%s/message-%s/config", deviceID, b.payload), haButtonConfig{
 			Name:              b.name,
 			UniqueID:          deviceID + "-message-" + b.payload,
-			CommandTopic:      c.messageTopic(target, "command"),
+			CommandTopic:      c.draftTopic(target, "message", "command"),
 			PayloadPress:      b.payload,
 			Icon:              b.icon,
 			AvailabilityTopic: c.availTopic,
 			Device:            device,
 		})
 	}
+
+	c.scheduleDraftDefaults(target, fieldMessageText, fieldMessageDuration)
 }
 
-// messageTarget extracts the target and the field below "message" from a
+// messageTarget extracts the target and the segments below "message" from a
 // topic: message/<rest...> or <client>/message/<rest...>.
 func (c *Client) messageTarget(topic string, restLen int) (target string, rest []string, ok bool) {
 	parts := c.topicParts(topic)
@@ -192,20 +182,19 @@ func (c *Client) messageCommandHandler(_ pahomqtt.Client, msg pahomqtt.Message) 
 	}
 
 	payload := strings.TrimSpace(string(msg.Payload()))
-	draft := c.draft(target)
 	cmd := MessageCommand{
 		Action:   MessageShow,
 		Target:   target,
 		Position: messageDefaultPosition,
 		Size:     messageDefaultSize,
-		Duration: minutesToDuration(draft.minutes),
+		Duration: c.draftDuration(target, fieldMessageDuration),
 	}
 
 	switch {
 	case payload == "":
 		return
 	case strings.EqualFold(payload, string(MessageShow)):
-		cmd.Text = draft.text
+		cmd.Text, _ = c.draft(target, fieldMessageText)
 	case strings.EqualFold(payload, string(MessageClear)):
 		c.dispatchMessage(MessageCommand{Action: MessageClear, Target: target})
 		return
@@ -217,7 +206,7 @@ func (c *Client) messageCommandHandler(_ pahomqtt.Client, msg pahomqtt.Message) 
 		}
 		cmd.Text = j.Text
 		if j.Duration > 0 {
-			cmd.Duration = minutesToDuration(j.Duration)
+			cmd.Duration = time.Duration(min(j.Duration, messageMaxMinutes) * float64(time.Minute))
 		}
 		cmd.Position = pick(j.Position, messagePositions, messageDefaultPosition)
 		cmd.Size = pick(j.Size, messageSizes, messageDefaultSize)
@@ -239,9 +228,7 @@ func (c *Client) messageSetHandler(_ pahomqtt.Client, msg pahomqtt.Message) {
 	if !ok || rest[1] != "set" {
 		return
 	}
-	if c.updateDraft(target, rest[0], string(msg.Payload())) {
-		c.client.Publish(c.messageTopic(target, rest[0]+"/state"), 1, true, msg.Payload())
-	}
+	c.handleDraftSet(target, "message/"+rest[0], string(msg.Payload()))
 }
 
 // messageStateHandler restores drafts from retained states.
@@ -250,47 +237,7 @@ func (c *Client) messageStateHandler(_ pahomqtt.Client, msg pahomqtt.Message) {
 	if !ok || rest[1] != "state" {
 		return
 	}
-	c.updateDraft(target, rest[0], string(msg.Payload()))
-}
-
-// updateDraft stores a text or duration value and reports whether it was valid.
-func (c *Client) updateDraft(target, field, value string) bool {
-	c.messageMu.Lock()
-	defer c.messageMu.Unlock()
-
-	d, ok := c.messageDrafts[target]
-	if !ok {
-		d = messageDraft{minutes: messageDefaultMinutes}
-	}
-
-	switch field {
-	case "text":
-		d.text = value
-	case "duration":
-		m, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-		if err != nil || m < 1 {
-			log.Warn("MQTT message: invalid duration", "value", value)
-			return false
-		}
-		d.minutes = min(m, messageMaxMinutes)
-	default:
-		return false
-	}
-
-	if c.messageDrafts == nil {
-		c.messageDrafts = make(map[string]messageDraft)
-	}
-	c.messageDrafts[target] = d
-	return true
-}
-
-func (c *Client) draft(target string) messageDraft {
-	c.messageMu.RLock()
-	defer c.messageMu.RUnlock()
-	if d, ok := c.messageDrafts[target]; ok {
-		return d
-	}
-	return messageDraft{minutes: messageDefaultMinutes}
+	c.setDraft(target, "message/"+rest[0], string(msg.Payload()))
 }
 
 func (c *Client) dispatchMessage(cmd MessageCommand) {
@@ -312,10 +259,6 @@ func normalizeMessageText(s string) string {
 		s = string(r[:messageMaxLength])
 	}
 	return s
-}
-
-func minutesToDuration(m float64) time.Duration {
-	return time.Duration(min(m, messageMaxMinutes) * float64(time.Minute))
 }
 
 // pick returns value lowercased when it is one of allowed, otherwise def.

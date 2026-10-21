@@ -29,8 +29,9 @@ func SetupOverride(ctx context.Context, baseConfig *config.Config, mqttClient *m
 		})
 
 		mqttClient.EnableOverride(mqtt.OverrideProvider{
-			Sources:    store.Sources(),
-			AssetNames: store.AssetNames,
+			Sources:     store.Sources(),
+			MaxDuration: store.MaxDuration(),
+			AssetNames:  store.AssetNames,
 			Current: func(target string) (string, string, bool) {
 				st := store.Current(target)
 				if st == nil {
@@ -71,7 +72,7 @@ func handleOverrideCommand(store *override.Store, mqttClient *mqtt.Client, cmd m
 			assetID, assetName = entry.ID, entry.Label
 		}
 
-		if err := store.Activate(cmd.Target, cmd.SourceKey, assetID, assetName); err != nil {
+		if err := store.Activate(cmd.Target, cmd.SourceKey, assetID, assetName, cmd.Duration); err != nil {
 			log.Error("override: activate", "err", err)
 			return
 		}
