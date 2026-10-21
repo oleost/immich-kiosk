@@ -15,6 +15,7 @@
 //	<prefix>/<client>/override/<source>/set   – HA select input (one client)
 //	<prefix>/override/<source>/state          – HA select state (all clients)
 //	<prefix>/<client>/override/<source>/state – HA select state (one client)
+//	<prefix>[/<client>]/override/duration/set – HA number input (minutes)
 //	<prefix>[/<client>]/message/command       – text message command
 //	<prefix>[/<client>]/message/text/set      – HA text input (message text)
 //	<prefix>[/<client>]/message/duration/set  – HA number input (minutes)
@@ -26,6 +27,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -66,11 +69,19 @@ type OverrideCommand struct {
 	SourceKey string // empty for a plain "stop" or "refresh-sources"
 	AssetName string // empty to show the whole album
 	Target    string // client name, or "" for all clients
+	// Duration is how long a started override lasts, as set in Home Assistant.
+	Duration time.Duration
 }
+
+// overrideDurationKey is the topic segment of the override duration number. It
+// shares the override/<source> namespace, so no source may use it as its key.
+const overrideDurationKey = "duration"
 
 // OverrideProvider connects the MQTT layer to the override store.
 type OverrideProvider struct {
 	Sources []config.OverrideSource
+	// MaxDuration is the default and longest override duration.
+	MaxDuration time.Duration
 	// AssetNames returns the selectable labels (description or filename) for a source.
 	AssetNames func(sourceKey string) []string
 	// Current returns the source and asset name of the override set for exactly
@@ -96,8 +107,15 @@ type Client struct {
 	overrideMu sync.RWMutex
 
 	messageHandle func(cmd MessageCommand)
-	messageDrafts map[string]messageDraft
 	messageMu     sync.RWMutex
+
+	drafts   map[draftKey]string
+	draftsMu sync.RWMutex
+
+	// seenClients are clients with retained override states on the broker,
+	// so their selects can be updated while they are not connected.
+	seenClients map[string]struct{}
+	seenMu      sync.Mutex
 }
 
 type haDevice struct {
@@ -174,11 +192,23 @@ func New(ctx context.Context, settings config.KioskSettings) (*Client, error) {
 		c.subscribeMessages(client)
 		c.publishMessageDiscovery(client, "")
 
+		// Home Assistant forgets states without a retained value (an empty
+		// message text) when it restarts.
+		c.subscribe(client, "homeassistant/status", func(_ pahomqtt.Client, msg pahomqtt.Message) {
+			if string(msg.Payload()) == "online" {
+				c.republishDrafts()
+			}
+		})
+
 		if subscribeOverride {
 			c.subscribe(client, prefix+"/override/command", c.overrideCommandHandler)
 			c.subscribe(client, prefix+"/+/override/command", c.overrideCommandHandler)
 			c.subscribe(client, prefix+"/override/+/set", c.overrideSelectHandler)
 			c.subscribe(client, prefix+"/+/override/+/set", c.overrideSelectHandler)
+			// Retained states restore the override duration after a restart and
+			// reveal clients that are not connected right now.
+			c.subscribe(client, prefix+"/override/"+overrideDurationKey+"/state", c.overrideStateHandler)
+			c.subscribe(client, prefix+"/+/override/+/state", c.overrideStateHandler)
 			c.publishOverrideDiscovery(client)
 		}
 	})
@@ -227,6 +257,14 @@ func (c *Client) AddHandler(h Handler) {
 
 // EnableOverride connects the override store and publishes its HA entities.
 func (c *Client) EnableOverride(p OverrideProvider) {
+	p.Sources = slices.DeleteFunc(slices.Clone(p.Sources), func(src config.OverrideSource) bool {
+		if src.Key == overrideDurationKey {
+			log.Error("override source key is reserved, not shown in Home Assistant", "key", src.Key)
+			return true
+		}
+		return false
+	})
+
 	c.overrideMu.Lock()
 	c.override = &p
 	c.overrideMu.Unlock()
@@ -315,8 +353,8 @@ func (c *Client) publishNavDiscovery(client pahomqtt.Client, target string) {
 	deviceID, device := c.device(target)
 
 	buttons := []struct{ name, payload string }{
-		{"Next image", string(CommandNext)},
-		{"Previous image", string(CommandPrevious)},
+		{"Image: next", string(CommandNext)},
+		{"Image: previous", string(CommandPrevious)},
 	}
 
 	for _, b := range buttons {
@@ -344,11 +382,37 @@ func (c *Client) publishOverrideDiscovery(client pahomqtt.Client) {
 	}
 
 	c.publishOverrideSelects(client, p, "")
-	for _, name := range p.Clients() {
-		if isValidClientName(name) {
-			c.publishOverrideSelects(client, p, name)
-		}
+	for _, name := range c.overrideTargets(p) {
+		c.publishOverrideSelects(client, p, name)
 	}
+}
+
+// overrideTargets returns the connected clients plus those seen on the broker,
+// so a client that is offline does not keep a stale image list.
+func (c *Client) overrideTargets(p *OverrideProvider) []string {
+	c.seenMu.Lock()
+	names := slices.Collect(maps.Keys(c.seenClients))
+	c.seenMu.Unlock()
+	if p.Clients != nil {
+		names = append(names, p.Clients()...)
+	}
+	names = slices.DeleteFunc(names, func(name string) bool { return !isValidClientName(name) })
+	slices.Sort(names)
+	return slices.Compact(names)
+}
+
+// rememberClient records a client seen on the broker and reports whether it is new.
+func (c *Client) rememberClient(name string) bool {
+	c.seenMu.Lock()
+	defer c.seenMu.Unlock()
+	if _, ok := c.seenClients[name]; ok {
+		return false
+	}
+	if c.seenClients == nil {
+		c.seenClients = make(map[string]struct{})
+	}
+	c.seenClients[name] = struct{}{}
+	return true
 }
 
 // publishOverrideSelects publishes one select per source on target's device
@@ -360,7 +424,7 @@ func (c *Client) publishOverrideSelects(client pahomqtt.Client, p *OverrideProvi
 		options := append([]string{overrideOff}, p.AssetNames(src.Key)...)
 
 		cfg := haSelectConfig{
-			Name:              src.Name,
+			Name:              "Override: " + src.Name,
 			UniqueID:          fmt.Sprintf("%s-override-%s-select", deviceID, src.Key),
 			CommandTopic:      c.overrideTopic(target, src.Key, "set"),
 			StateTopic:        c.overrideTopic(target, src.Key, "state"),
@@ -371,6 +435,23 @@ func (c *Client) publishOverrideSelects(client pahomqtt.Client, p *OverrideProvi
 		}
 		c.publishJSON(client, fmt.Sprintf("homeassistant/select/%s-override-%s/config", deviceID, src.Key), cfg)
 	}
+
+	c.publishJSON(client, fmt.Sprintf("homeassistant/number/%s-override-duration/config", deviceID), haNumberConfig{
+		Name:              "Override: duration",
+		UniqueID:          deviceID + "-override-duration",
+		CommandTopic:      c.draftTopic(target, fieldOverrideDuration, "set"),
+		StateTopic:        c.draftTopic(target, fieldOverrideDuration, "state"),
+		Min:               1,
+		Max:               c.maxMinutes(fieldOverrideDuration),
+		Step:              1,
+		Mode:              "box",
+		UnitOfMeasurement: "min",
+		Icon:              "mdi:timer-outline",
+		EntityCategory:    "config",
+		AvailabilityTopic: c.availTopic,
+		Device:            device,
+	})
+	c.scheduleDraftDefaults(target, fieldOverrideDuration)
 
 	c.PublishOverrideState(target)
 }
@@ -459,6 +540,7 @@ func (c *Client) overrideCommandHandler(_ pahomqtt.Client, msg pahomqtt.Message)
 		cmd.SourceKey = fields[1]
 		// Descriptions and filenames may contain spaces.
 		cmd.AssetName = strings.Join(fields[2:], " ")
+		cmd.Duration = c.draftDuration(target, fieldOverrideDuration)
 	default:
 		log.Warn("MQTT override: unknown command", "payload", string(msg.Payload()))
 		return
@@ -482,12 +564,51 @@ func (c *Client) overrideSelectHandler(_ pahomqtt.Client, msg pahomqtt.Message) 
 	}
 
 	value := strings.TrimSpace(string(msg.Payload()))
-	cmd := OverrideCommand{Action: OverrideStart, SourceKey: key, AssetName: value, Target: target}
+	if key == overrideDurationKey {
+		c.handleDraftSet(target, fieldOverrideDuration, value)
+		return
+	}
+
+	cmd := OverrideCommand{
+		Action:    OverrideStart,
+		SourceKey: key,
+		AssetName: value,
+		Target:    target,
+		Duration:  c.draftDuration(target, fieldOverrideDuration),
+	}
 	if strings.EqualFold(value, overrideOff) {
 		cmd = OverrideCommand{Action: OverrideStop, SourceKey: key, Target: target}
 	}
 
 	c.dispatchOverride(cmd)
+}
+
+// overrideStateHandler reads retained override states: it restores the
+// override duration and remembers clients that are not connected.
+func (c *Client) overrideStateHandler(client pahomqtt.Client, msg pahomqtt.Message) {
+	parts := c.topicParts(msg.Topic())
+
+	var target, key string
+	switch {
+	case len(parts) == 3 && parts[0] == "override":
+		key = parts[1]
+	case len(parts) == 4 && parts[1] == "override" && isValidClientName(parts[0]):
+		target, key = parts[0], parts[2]
+	default:
+		return
+	}
+
+	if key == overrideDurationKey {
+		c.setDraft(target, fieldOverrideDuration, string(msg.Payload()))
+	}
+
+	// The list may have been published before this state arrived; update the
+	// client now instead of waiting for the next change.
+	if target != "" && c.rememberClient(target) {
+		if p := c.overrideProvider(); p != nil && client != nil {
+			go c.publishOverrideSelects(client, p, target)
+		}
+	}
 }
 
 func (c *Client) dispatchOverride(cmd OverrideCommand) {

@@ -202,13 +202,14 @@ kiosk:
 
   ## Text messages - show a timed text on top of the slideshow (enabled with MQTT)
   #
-  # Each Home Assistant device ("all" and each client) gets a "Message text" box,
-  # a "Message duration" (minutes) and "Show message" / "Clear message" buttons.
+  # Each Home Assistant device ("all" and each client) gets "Message: content" and
+  # "Message: duration" (minutes) under Configuration, and "Message: send" /
+  # "Message: stop" buttons under Controls.
   # Messages are kept in memory; a new message replaces the current one.
   # A client's own message takes priority over one sent to all clients.
   #
   # Raw MQTT commands, on <prefix>/message/command (all) or <prefix>/<client>/message/command:
-  #   show                        show the text from the "Message text" box
+  #   show                        show the text from the "Message: content" box
   #   clear                       remove the message
   #   <any other text>            show that text for the set duration
   #   {"text": "Dinner!", "duration": 10, "position": "top", "size": "large"}
@@ -219,10 +220,11 @@ kiosk:
   ## Override - temporarily show a specific image or album via MQTT (e.g. tonight's recipe)
   #
   # Only albums listed in override_sources can be shown; nothing else is reachable.
-  # Requires MQTT. Overrides are kept in memory and end after override_max_duration
-  # (or on restart), after which the screen returns to its normal slideshow.
+  # Requires MQTT. Overrides are kept in memory and end after the "Override: duration"
+  # set in Home Assistant (or on restart), after which the screen returns to its
+  # normal slideshow.
   #
-  # override_max_duration: 7200          # seconds an override stays active (default: 7200 = 2 h)
+  # override_max_duration: 7200          # seconds; default and longest override duration (default: 7200 = 2 h)
   # override_source_refresh_interval: 5  # minutes between reloading image lists (default: 5)
   #
   # override_sources:
@@ -230,9 +232,11 @@ kiosk:
   #     name: "Kitchen recipes"          # name shown in Home Assistant
   #     album: "abc123-immich-album-id"  # Immich album UUID
   #
-  # Home Assistant gets a select per source on the "Immich Kiosk (all)" device and
-  # on each client device (?client=<name>). Pick an image to show it, "off" to stop.
+  # Home Assistant gets an "Override: <name>" select per source on the "Immich Kiosk (all)"
+  # device and on each client device (?client=<name>). Pick an image to show it, "off" to stop.
   # Images are listed by their Immich description, or by filename when it is empty.
+  # "Override: duration" (minutes, under Configuration) sets how long it is shown.
+  # The source key "duration" is reserved.
   #
   # Raw MQTT commands, on <prefix>/override/command (all) or <prefix>/<client>/override/command:
   #   start <key> <name>          show one image (description or filename)

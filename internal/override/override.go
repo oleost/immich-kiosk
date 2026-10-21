@@ -87,6 +87,11 @@ func New(immichURL, apiKey string, settings config.KioskSettings) *Store {
 	}
 }
 
+// MaxDuration returns the default and longest override duration.
+func (s *Store) MaxDuration() time.Duration {
+	return s.maxDuration
+}
+
 // Sources returns the configured override sources.
 func (s *Store) Sources() []config.OverrideSource {
 	return s.sources
@@ -213,7 +218,8 @@ func (s *Store) SourceByKey(key string) (config.OverrideSource, bool) {
 
 // Activate starts an override for target ("" = all clients) using a configured source.
 // assetID must come from ResolveAssetName, or be empty to show the whole album.
-func (s *Store) Activate(target, sourceKey, assetID, assetName string) error {
+// A duration of zero or above the maximum is replaced by the maximum.
+func (s *Store) Activate(target, sourceKey, assetID, assetName string, duration time.Duration) error {
 	src, ok := s.SourceByKey(sourceKey)
 	if !ok {
 		return fmt.Errorf("unknown override source %q", sourceKey)
@@ -224,7 +230,7 @@ func (s *Store) Activate(target, sourceKey, assetID, assetName string) error {
 		AlbumID:   src.Album,
 		AssetID:   assetID,
 		AssetName: assetName,
-		ExpiresAt: time.Now().Add(s.maxDuration),
+		ExpiresAt: time.Now().Add(clampDuration(duration, s.maxDuration)),
 	}
 
 	s.mu.Lock()
@@ -233,6 +239,13 @@ func (s *Store) Activate(target, sourceKey, assetID, assetName string) error {
 
 	log.Warn("override: activated", "source", sourceKey, "asset", assetName, "target", target, "until", st.ExpiresAt.Format(time.TimeOnly))
 	return nil
+}
+
+func clampDuration(d, maxDuration time.Duration) time.Duration {
+	if d <= 0 || d > maxDuration {
+		return maxDuration
+	}
+	return d
 }
 
 // Deactivate clears the override for target.

@@ -189,7 +189,7 @@ type KioskSettings struct {
 
 	// OverrideSources are the only albums that may be shown as a timed override via MQTT.
 	OverrideSources []OverrideSource `json:"overrideSources" yaml:"override_sources" mapstructure:"override_sources" default:"[]"`
-	// OverrideMaxDuration is how many seconds an override stays active (default 2 h).
+	// OverrideMaxDuration is the default and longest override duration in seconds (default 2 h).
 	OverrideMaxDuration int `json:"overrideMaxDuration" yaml:"override_max_duration" mapstructure:"override_max_duration" default:"7200"`
 	// OverrideSourceRefreshInterval is how often (minutes) the override image lists are
 	// reloaded from Immich. 0 = only at startup and on the refresh-sources command.
