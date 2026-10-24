@@ -247,3 +247,14 @@ kiosk:
   #   start <key>                 show the whole source album
   #   stop                        end the override
   #   refresh-sources [<key>]     reload image lists now (e.g. after adding a recipe)
+
+  ## Album focus - show only one of the albums above via MQTT (no extra config)
+  #
+  # With two or more entries in "albums", each Home Assistant device gets an
+  # "Album: show" select. "Default" is the normal slideshow; picking an album shows
+  # only that album until "Default" is picked again.
+  # On "Immich Kiosk (all)" the options are the albums from this file and the choice
+  # applies to every screen. On a client device the options are the albums that screen
+  # uses (its URL, or this file) and the choice wins over the "all" device.
+  # An override wins over the focus. The choice is retained in MQTT across restarts.
+  # Raw MQTT: publish an album name or "Default" to <prefix>[/<client>]/album/set.

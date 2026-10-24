@@ -167,7 +167,7 @@ Files:
   `internal/routes/routes_album.go` (new)
 - `internal/mqtt/album.go` (new), `internal/mqtt/mqtt.go` (+ `mqtt_test.go`)
 - `internal/routes/routes_asset.go`, `main.go`
-- `MQTT.md`, `.github/README.md`
+- `MQTT.md`, `.github/README.md`, `config.example.yaml`
 
 ## Previously carried, now upstream
 

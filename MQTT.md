@@ -51,7 +51,8 @@ Restart Kiosk. The log shows `MQTT connected` and `MQTT enabled`, and an
 **Immich Kiosk (all)** device appears in HA under Settings → Devices & services
 → MQTT.
 
-Text messages are always available once MQTT is enabled. Override needs extra
+Text messages and album focus are always available once MQTT is enabled
+(album focus needs at least two albums in `albums:`). Override needs extra
 configuration, see [Override](#override).
 
 ## Naming screens
@@ -249,9 +250,14 @@ albums with the same name get `(2)`, `(3)` … added. The names are read when
 Kiosk starts and when the album list changes; restart Kiosk after renaming an
 album in Immich.
 
+**When the select appears:** on the "all" device when Kiosk starts. On a
+screen's device once that screen has loaded its first image, since only then
+does Kiosk know which albums the screen uses. If the screen uses fewer than two
+albums it gets no select, but still follows the "all" device.
+
 **Kept across restarts:** the choice is stored as a retained MQTT state. After a
 restart a screen's own choice takes effect when the screen loads its first
-image.
+image. If the chosen album is no longer in the list, the select shows `Default`.
 
 **From automations and scripts**, publish the album name (or `Default`) to
 `immich-kiosk/album/set` (all screens) or `immich-kiosk/<name>/album/set`.
