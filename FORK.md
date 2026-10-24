@@ -148,7 +148,7 @@ lists the additions, and credits upstream.
 
 An `Album: show` select per HA device narrows the slideshow down to one of the
 albums the kiosk already shows, with no time limit. Builds on the MQTT feature
-(1); no new config keys.
+(1).
 
 - Options: `Default` plus the albums from `config.yaml` on the "all" device,
   and the albums a client requests (URL or config) on a client device. Labels
@@ -161,12 +161,17 @@ albums the kiosk already shows, with no time limit. Builds on the MQTT feature
   a retained state on `<prefix>[/<client>]/album/state` and is restored on
   startup.
 - While a focus is active the prefetch cache is bypassed, as for overrides.
+- `albums_on_demand` (top-level, next to `albums`): extra options on every
+  device that are never part of `Default`. It is a separate key rather than a
+  marker inside `albums`, so no upstream code that reads `albums` changes.
+  Not settable via URL (`?album=<id>` already shows any album).
 
 Files:
 - `internal/albumfocus/albumfocus.go` (new, + tests),
   `internal/routes/routes_album.go` (new)
 - `internal/mqtt/album.go` (new), `internal/mqtt/mqtt.go` (+ `mqtt_test.go`)
 - `internal/routes/routes_asset.go`, `main.go`
+- `internal/config/config.go`, `config.schema.json` (`albums_on_demand`)
 - `MQTT.md`, `.github/README.md`, `config.example.yaml`
 
 ## Previously carried, now upstream

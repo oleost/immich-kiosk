@@ -39,6 +39,10 @@ album_order: random # random | newest | oldest
 # appearing in the frame even if they are included in the 'album' list.
 excluded_albums:
   - "ALBUM_ID"
+# Albums that are never part of the normal slideshow. They are only shown when picked
+# in Home Assistant ("Album: show", needs MQTT) or opened with ?album=<id> in the URL.
+albums_on_demand:
+  - "ALBUM_ID"
 
 ## Date range or ranges to display
 dates:
@@ -250,9 +254,10 @@ kiosk:
 
   ## Album focus - show only one of the albums above via MQTT (no extra config)
   #
-  # With two or more entries in "albums", each Home Assistant device gets an
-  # "Album: show" select. "Default" is the normal slideshow; picking an album shows
-  # only that album until "Default" is picked again.
+  # With two or more entries in "albums" and "albums_on_demand" together, each Home
+  # Assistant device gets an "Album: show" select. "Default" is the normal slideshow
+  # (never the albums_on_demand); picking an album shows only that album until
+  # "Default" is picked again. albums_on_demand are offered on every device.
   # On "Immich Kiosk (all)" the options are the albums from this file and the choice
   # applies to every screen. On a client device the options are the albums that screen
   # uses (its URL, or this file) and the choice wins over the "all" device.

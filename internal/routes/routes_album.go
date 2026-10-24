@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"slices"
 
 	"charm.land/log/v2"
 
@@ -33,7 +34,13 @@ func SetupAlbumFocus(ctx context.Context, baseConfig *config.Config, mqttClient 
 		Restore: store.Restore,
 	})
 
-	store.Learn("", baseConfig.Albums)
+	store.Learn("", focusAlbums(baseConfig, baseConfig.Albums))
+}
+
+// focusAlbums returns the albums a target offers: its own albums plus the
+// on-demand albums, which are never shown by default.
+func focusAlbums(baseConfig *config.Config, albums []string) []string {
+	return slices.Concat(albums, baseConfig.AlbumsOnDemand)
 }
 
 // albumNameResolver looks up Immich album names, using the API key of the
@@ -72,9 +79,9 @@ func learnAlbums(baseConfig *config.Config, requestConfig *config.Config, client
 		return
 	}
 	// The config can be reloaded while Kiosk is running.
-	albumFocusStore.Learn("", baseConfig.Albums)
+	albumFocusStore.Learn("", focusAlbums(baseConfig, baseConfig.Albums))
 	if name := validSSEClientName(clientName); name != "_global" {
-		albumFocusStore.Learn(name, requestConfig.Albums)
+		albumFocusStore.Learn(name, focusAlbums(baseConfig, requestConfig.Albums))
 	}
 }
 

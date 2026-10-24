@@ -52,7 +52,8 @@ Restart Kiosk. The log shows `MQTT connected` and `MQTT enabled`, and an
 → MQTT.
 
 Text messages and album focus are always available once MQTT is enabled
-(album focus needs at least two albums in `albums:`). Override needs extra
+(album focus needs at least two albums in `albums:` and `albums_on_demand:`
+together). Override needs extra
 configuration, see [Override](#override).
 
 ## Naming screens
@@ -91,8 +92,8 @@ gets the same entities. Commands on the "all" device go to every screen.
 | Override: duration | number | Configuration | Minutes an override stays (1 to `override_max_duration`) |
 
 The override entities only exist when `override_sources` is configured.
-*Album: show* only exists on a device with at least two albums, see
-[Album focus](#album-focus).
+*Album: show* only exists on a device with at least two albums (counting
+`albums_on_demand`), see [Album focus](#album-focus).
 
 HA sorts entities alphabetically by name within each section, which is why the
 names have prefixes. The content and duration values are stored as retained
@@ -223,6 +224,22 @@ albums:
 
 gives the options `Default`, `Birthdays`, `Cabin` and `Summer 2025`.
 
+**Albums only shown on demand:** albums in `albums_on_demand:` are never part of
+`Default`. They only appear when you pick them in **Album: show**, or when a
+screen opens them with `?album=<id>` in its URL (which works for any album).
+
+```yaml
+albums:
+  - "id-of-summer-2025"
+  - "id-of-cabin"
+albums_on_demand:
+  - "id-of-christmas"    # only when picked
+```
+
+`Default` shows Summer 2025 and Cabin; `Christmas` is an extra option on every
+device. One album in `albums:` plus one in `albums_on_demand:` is enough to get
+the select.
+
 - **`Default`** is the normal slideshow: the albums from `config.yaml`, or the
   albums in the screen's URL (`?album=…`), mixed with any people, tags, dates
   or memories you have configured. Nothing changes until you pick something
@@ -232,11 +249,12 @@ gives the options `Default`, `Birthdays`, `Cabin` and `Summer 2025`.
 
 **All screens or one screen:**
 
-- On **Immich Kiosk (all)** the options are the albums from `config.yaml`. The
+- On **Immich Kiosk (all)** the options are the albums from `config.yaml`
+  (`albums:` and `albums_on_demand:`). The
   choice applies to every screen, also screens with their own albums in the
   URL. Back on `Default`, every screen shows its own albums again.
 - On a screen's device the options are the albums that screen uses (from its
-  URL, or `config.yaml` when the URL has none). The choice applies only to that
+  URL, or `config.yaml` when the URL has none), plus `albums_on_demand:`. The choice applies only to that
   screen and wins over the "all" device. `Default` here means "follow the all
   device".
 - An [override](#override) wins while it lasts. Afterwards the screen goes back

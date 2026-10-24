@@ -514,3 +514,18 @@ func TestConfig_checkIDs(t *testing.T) {
 		})
 	}
 }
+
+// TestAlbumsOnDemandLoad tests that albums_on_demand is loaded and kept apart from albums
+func TestAlbumsOnDemandLoad(t *testing.T) {
+	t.Setenv("KIOSK_IMMICH_URL", "http://immich")
+	t.Setenv("KIOSK_IMMICH_API_KEY", "12345")
+	t.Setenv("KIOSK_ALBUMS", "BASE_ALBUM")
+	t.Setenv("KIOSK_ALBUMS_ON_DEMAND", "EXTRA_ALBUM")
+
+	c := New()
+	err := c.Load()
+	assert.NoError(t, err, "Config load should not return an error")
+
+	assert.Equal(t, []string{"BASE_ALBUM"}, c.Albums, "albums_on_demand should not be added to albums")
+	assert.Equal(t, []string{"EXTRA_ALBUM"}, c.AlbumsOnDemand, "albums_on_demand should be loaded")
+}

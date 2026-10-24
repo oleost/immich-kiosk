@@ -28,7 +28,8 @@ The main additions are about controlling Kiosk from Home Assistant over MQTT:
   set time, e.g. tonight's recipe in the kitchen. Images are picked by their
   Immich description.
 - **Album focus** – show only one of the albums from your config, on all
-  screens or one screen, until you switch back to `Default`.
+  screens or one screen, until you switch back to `Default`. Albums in
+  `albums_on_demand` are only shown when picked.
 
 **How to set it up and use it: [MQTT.md](https://github.com/oleost/immich-kiosk/blob/main/MQTT.md).**
 

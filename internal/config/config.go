@@ -386,6 +386,9 @@ type Config struct {
 	// AlbumOrder specifies the order in which album assets are displayed.
 	AlbumOrder     string   `json:"album_order" yaml:"album_order" mapstructure:"album_order" query:"album_order" form:"album_order" default:"random"`
 	ExcludedAlbums []string `json:"excluded_albums" yaml:"excluded_albums" mapstructure:"excluded_albums" query:"exclude_album" form:"exclude_album" default:"[]" redact:"true"`
+	// AlbumsOnDemand are albums offered by the MQTT album focus but never shown by
+	// default. Not settable via URL; ?album=<id> already shows any album.
+	AlbumsOnDemand []string `json:"albumsOnDemand" yaml:"albums_on_demand" mapstructure:"albums_on_demand" default:"[]" redact:"true"`
 
 	// Dates date ranges
 	Dates []string `json:"dates" yaml:"dates" mapstructure:"dates" query:"date" form:"date" default:"[]"`
@@ -769,6 +772,7 @@ func (c *Config) Load() error {
 	c.checkIDs("people", c.People, true, true)
 	c.checkIDs("excluded_people", c.ExcludedPeople, false, true)
 	c.checkIDs("albums", c.Albums, true, true)
+	c.checkIDs("albums_on_demand", c.AlbumsOnDemand, true, true)
 	c.checkIDs("excluded_albums", c.ExcludedAlbums, false, false)
 	c.checkIDs("excluded_partners", c.ExcludedPartners, false, false)
 	c.checkAlbumOrder()
