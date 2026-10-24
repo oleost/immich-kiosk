@@ -20,6 +20,8 @@
 //	<prefix>[/<client>]/message/text/set      – HA text input (message text)
 //	<prefix>[/<client>]/message/duration/set  – HA number input (minutes)
 //	<prefix>[/<client>]/message/<field>/state – HA text/number state
+//	<prefix>[/<client>]/album/set             – HA select input (album focus)
+//	<prefix>[/<client>]/album/state           – HA select state (album focus)
 //	<prefix>/status                           – availability (online/offline)
 package mqtt
 
@@ -105,6 +107,9 @@ type Client struct {
 
 	override   *OverrideProvider
 	overrideMu sync.RWMutex
+
+	album   *AlbumProvider
+	albumMu sync.RWMutex
 
 	messageHandle func(cmd MessageCommand)
 	messageMu     sync.RWMutex
@@ -211,6 +216,12 @@ func New(ctx context.Context, settings config.KioskSettings) (*Client, error) {
 			c.subscribe(client, prefix+"/+/override/+/state", c.overrideStateHandler)
 			c.publishOverrideDiscovery(client)
 		}
+
+		// On the first connect the album provider is not set yet;
+		// EnableAlbumFocus subscribes then.
+		if c.albumProvider() != nil {
+			c.subscribeAlbum(client)
+		}
 	})
 
 	opts.SetConnectionLostHandler(func(_ pahomqtt.Client, err error) {
@@ -298,6 +309,7 @@ func (c *Client) PublishClientDiscovery(clientName string) {
 	if p := c.overrideProvider(); p != nil {
 		c.publishOverrideSelects(c.client, p, clientName)
 	}
+	c.PublishAlbumDiscovery(clientName)
 	log.Info("MQTT client discovery published", "client", clientName)
 }
 

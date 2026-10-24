@@ -54,8 +54,12 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
 			return c.NoContent(http.StatusNoContent)
 		}
 
-		// The prefetch cache is keyed by URL and does not know about overrides, so bypass it.
-		overrideActive := applyOverride(&requestConfig, requestData.ClientName)
+		learnAlbums(baseConfig, &requestConfig, requestData.ClientName)
+
+		// The prefetch cache is keyed by URL and does not know about overrides
+		// or the album focus, so bypass it. An override wins over the focus.
+		overrideActive := applyOverride(&requestConfig, requestData.ClientName) ||
+			applyAlbumFocus(&requestConfig, requestData.ClientName)
 
 		// use history
 		if len(requestConfig.History) > 1 && !strings.HasPrefix(requestConfig.History[len(requestConfig.History)-1], "*") {

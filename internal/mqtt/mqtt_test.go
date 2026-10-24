@@ -135,3 +135,25 @@ func TestOverrideTargetsIncludeSeenClients(t *testing.T) {
 		t.Errorf("pc duration = %v, want the 2h default", d)
 	}
 }
+
+func TestAlbumStateHandler(t *testing.T) {
+	var restored []string
+	c := &Client{topicPrefix: "kiosk"}
+	c.album = &AlbumProvider{
+		Options: func(string) ([]string, bool) { return nil, false },
+		Restore: func(target, option string) bool {
+			restored = append(restored, option+"@"+target)
+			return true
+		},
+	}
+
+	c.albumStateHandler(nil, fakeMessage{"kiosk/album/state", "Cabin"})
+	c.albumStateHandler(nil, fakeMessage{"kiosk/ipad/album/state", "Default"})
+	// The state of an override source named "album", not an album focus.
+	c.albumStateHandler(nil, fakeMessage{"kiosk/override/album/state", "off"})
+	c.albumStateHandler(nil, fakeMessage{"kiosk/ipad/album/state", ""})
+
+	if want := []string{"Cabin@", "Default@ipad"}; !slices.Equal(restored, want) {
+		t.Errorf("restored = %v, want %v", restored, want)
+	}
+}

@@ -3,7 +3,8 @@
 This is a fork of [damongolding/immich-kiosk](https://github.com/damongolding/immich-kiosk).
 It tracks upstream closely and carries a small set of extra changes on top.
 
-**Using the fork features** (MQTT, Home Assistant, text messages, override):
+**Using the fork features** (MQTT, Home Assistant, text messages, override,
+album focus):
 see [MQTT.md](MQTT.md). This file describes the changes for maintaining the fork.
 
 ## How this fork stays in sync with upstream
@@ -142,6 +143,36 @@ lists the additions, and credits upstream.
 - `.github/ISSUE_TEMPLATE/config.yml`: blank issues allowed, and the upstream
   "Feature Request" discussion link replaced with the upstream docs (issues are
   enabled on the fork)
+
+### 9. Album focus via MQTT (`feat: focus the slideshow on one album via MQTT`)
+
+An `Album: show` select per HA device narrows the slideshow down to one of the
+albums the kiosk already shows, with no time limit. Builds on the MQTT feature
+(1).
+
+- Options: `Default` plus the albums from `config.yaml` on the "all" device,
+  and the albums a client requests (URL or config) on a client device. Labels
+  are the Immich album names, made unique; keywords get fixed labels. A device
+  with fewer than two albums gets no select.
+- A client selection wins over the "all" selection; the "all" selection also
+  applies to clients whose URL has other albums. An override wins over both.
+- Client album lists are learned from asset requests (in memory), so after a
+  restart a client's select appears once it loads an image. The selection is
+  a retained state on `<prefix>[/<client>]/album/state` and is restored on
+  startup.
+- While a focus is active the prefetch cache is bypassed, as for overrides.
+- `albums_on_demand` (top-level, next to `albums`): extra options on every
+  device that are never part of `Default`. It is a separate key rather than a
+  marker inside `albums`, so no upstream code that reads `albums` changes.
+  Not settable via URL (`?album=<id>` already shows any album).
+
+Files:
+- `internal/albumfocus/albumfocus.go` (new, + tests),
+  `internal/routes/routes_album.go` (new)
+- `internal/mqtt/album.go` (new), `internal/mqtt/mqtt.go` (+ `mqtt_test.go`)
+- `internal/routes/routes_asset.go`, `main.go`
+- `internal/config/config.go`, `config.schema.json` (`albums_on_demand`)
+- `MQTT.md`, `.github/README.md`, `config.example.yaml`
 
 ## Previously carried, now upstream
 
