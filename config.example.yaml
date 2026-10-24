@@ -39,6 +39,10 @@ album_order: random # random | newest | oldest
 # appearing in the frame even if they are included in the 'album' list.
 excluded_albums:
   - "ALBUM_ID"
+# Albums that are never part of the normal slideshow. They are only shown when picked
+# in Home Assistant ("Album: show", needs MQTT) or opened with ?album=<id> in the URL.
+albums_on_demand:
+  - "ALBUM_ID"
 
 ## Date range or ranges to display
 dates:
@@ -247,3 +251,24 @@ kiosk:
   #   start <key>                 show the whole source album
   #   stop                        end the override
   #   refresh-sources [<key>]     reload image lists now (e.g. after adding a recipe)
+
+  ## Home Assistant controls (enabled with MQTT, no extra config)
+  #
+  # Each Home Assistant device ("all" and each client) also gets:
+  #   Album: show / Person: show   selects: show only one album or person from
+  #                                "albums"/"albums_on_demand" or "people" (needs two
+  #                                or more); "Default" is the normal slideshow (never
+  #                                the albums_on_demand). Album and person exclude
+  #                                each other on one device.
+  #   Slideshow: pause             switch: freeze the current image
+  #   Slideshow: sleep             switch: sleep mode now, with or without sleep_start/end
+  #   Filter: favorites            switch: only favorites (combines with a focus)
+  #   Filter: memories             switch: only memories; normal slideshow if none today
+  #   Page: reload                 button: reload the page
+  #   Image: current / preview     sensor and image: what the screen shows
+  # On "Immich Kiosk (all)" a setting applies to every screen; on a client device it
+  # applies to that screen and wins over "all". An override wins over focus and filters.
+  # Selects and switches are retained in MQTT across restarts. Full guide: MQTT.md
+  # Raw MQTT: <prefix>[/<client>]/album/set and /person/set take a name or "Default";
+  # /pause/set, /sleep/set, /favorites/set and /memories/set take ON or OFF;
+  # "reload" on <prefix>[/<client>]/command reloads the page.

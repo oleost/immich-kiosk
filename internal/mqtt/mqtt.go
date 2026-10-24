@@ -20,6 +20,10 @@
 //	<prefix>[/<client>]/message/text/set      – HA text input (message text)
 //	<prefix>[/<client>]/message/duration/set  – HA number input (minutes)
 //	<prefix>[/<client>]/message/<field>/state – HA text/number state
+//	<prefix>[/<client>]/<control>/set         – HA select/switch input (album, person,
+//	                                            pause, sleep, favorites, memories)
+//	<prefix>[/<client>]/<control>/state       – HA select/switch state
+//	<prefix>[/<client>]/image/…               – what the screen shows (sensor, image)
 //	<prefix>/status                           – availability (online/offline)
 package mqtt
 
@@ -45,6 +49,7 @@ type Command string
 const (
 	CommandNext     Command = "next"
 	CommandPrevious Command = "previous"
+	CommandReload   Command = "reload"
 )
 
 // Handler is called when a valid navigation command is received.
@@ -105,6 +110,9 @@ type Client struct {
 
 	override   *OverrideProvider
 	overrideMu sync.RWMutex
+
+	controls   *controls
+	controlsMu sync.RWMutex
 
 	messageHandle func(cmd MessageCommand)
 	messageMu     sync.RWMutex
@@ -185,6 +193,7 @@ func New(ctx context.Context, settings config.KioskSettings) (*Client, error) {
 
 		client.Publish(c.availTopic, 1, true, "online")
 		c.publishNavDiscovery(client, "")
+		c.publishNowShowingDiscovery("")
 
 		c.subscribe(client, prefix+"/command", c.messageHandler)
 		c.subscribe(client, prefix+"/+/command", c.messageHandler)
@@ -211,6 +220,10 @@ func New(ctx context.Context, settings config.KioskSettings) (*Client, error) {
 			c.subscribe(client, prefix+"/+/override/+/state", c.overrideStateHandler)
 			c.publishOverrideDiscovery(client)
 		}
+
+		// On the first connect the controls are not enabled yet;
+		// EnableControls subscribes then.
+		c.subscribeControls(client)
 	})
 
 	opts.SetConnectionLostHandler(func(_ pahomqtt.Client, err error) {
@@ -298,6 +311,8 @@ func (c *Client) PublishClientDiscovery(clientName string) {
 	if p := c.overrideProvider(); p != nil {
 		c.publishOverrideSelects(c.client, p, clientName)
 	}
+	c.PublishControlDiscovery(clientName)
+	c.publishNowShowingDiscovery(clientName)
 	log.Info("MQTT client discovery published", "client", clientName)
 }
 
@@ -344,7 +359,7 @@ func (c *Client) device(target string) (string, haDevice) {
 	}
 }
 
-// publishNavDiscovery publishes the Next and Previous buttons for target ("" = all clients).
+// publishNavDiscovery publishes the next, previous and reload buttons for target ("" = all clients).
 func (c *Client) publishNavDiscovery(client pahomqtt.Client, target string) {
 	commandTopic := c.topicPrefix + "/command"
 	if target != "" {
@@ -352,9 +367,10 @@ func (c *Client) publishNavDiscovery(client pahomqtt.Client, target string) {
 	}
 	deviceID, device := c.device(target)
 
-	buttons := []struct{ name, payload string }{
-		{"Image: next", string(CommandNext)},
-		{"Image: previous", string(CommandPrevious)},
+	buttons := []struct{ name, payload, icon string }{
+		{"Image: next", string(CommandNext), ""},
+		{"Image: previous", string(CommandPrevious), ""},
+		{"Page: reload", string(CommandReload), "mdi:refresh"},
 	}
 
 	for _, b := range buttons {
@@ -363,6 +379,7 @@ func (c *Client) publishNavDiscovery(client pahomqtt.Client, target string) {
 			UniqueID:          deviceID + "-" + b.payload,
 			CommandTopic:      commandTopic,
 			PayloadPress:      b.payload,
+			Icon:              b.icon,
 			AvailabilityTopic: c.availTopic,
 			Device:            device,
 		}
@@ -490,7 +507,7 @@ func (c *Client) messageHandler(_ pahomqtt.Client, msg pahomqtt.Message) {
 	}
 
 	cmd := Command(payload)
-	if cmd != CommandNext && cmd != CommandPrevious {
+	if cmd != CommandNext && cmd != CommandPrevious && cmd != CommandReload {
 		log.Warn("MQTT unknown navigation command", "payload", payload)
 		return
 	}

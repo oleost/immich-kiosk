@@ -92,6 +92,13 @@
       },
       "uniqueItems": true
     },
+    "albums_on_demand": {
+      "type": ["string", "array"],
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
     "album_order": {
       "type": "string"
     },

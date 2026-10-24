@@ -54,8 +54,21 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
 			return c.NoContent(http.StatusNoContent)
 		}
 
-		// The prefetch cache is keyed by URL and does not know about overrides, so bypass it.
+		// Sleep switched on in Home Assistant, regardless of the schedule.
+		if sleepForced(requestData.ClientName) {
+			return c.NoContent(http.StatusNoContent)
+		}
+
+		learnSources(baseConfig, &requestConfig, requestData.ClientName)
+
+		// The prefetch cache is keyed by URL and does not know about overrides
+		// or the Home Assistant controls, so bypass it. An override wins over
+		// the controls.
 		overrideActive := applyOverride(&requestConfig, requestData.ClientName)
+		uncontrolledConfig := requestConfig
+		controlsActive := !overrideActive &&
+			applyControls(com.Context(), &requestConfig, requestData.ClientName, requestID, deviceID)
+		bypassPrefetch := overrideActive || controlsActive
 
 		// use history
 		if len(requestConfig.History) > 1 && !strings.HasPrefix(requestConfig.History[len(requestConfig.History)-1], "*") {
@@ -65,11 +78,12 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
 		requestCtx := common.CopyContext(c, com.Context())
 		requestCtx.Ctx = com.Context()
 
-		// get and use prefetch data (if found) — skip cache when override is active
-		if requestConfig.Kiosk.PreFetch && !overrideActive {
+		// get and use prefetch data (if found) — skip cache when an override or control is active
+		if requestConfig.Kiosk.PreFetch && !bypassPrefetch {
 			if cachedViewData := fromCache(requestCtx.URL.String(), deviceID); cachedViewData != nil {
 				go assetPreFetch(com, requestData, requestCtx)
 				go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, cachedViewData[0])
+				publishNowShowing(com.Context(), baseConfig, requestData, cachedViewData[0])
 
 				return renderCachedViewData(c, cachedViewData, &requestConfig, requestID, deviceID, com.Secret())
 			}
@@ -77,16 +91,22 @@ func NewAsset(baseConfig *config.Config, com *common.Common) echo.HandlerFunc {
 		}
 
 		viewData, err := generateViewData(requestConfig, requestCtx, requestID, deviceID, false)
+		if err != nil && controlsActive {
+			// E.g. a focused person without favorites: show the normal slideshow.
+			log.Warn(requestID+" nothing to show with the Home Assistant controls, using the normal sources", "err", err)
+			viewData, err = generateViewData(uncontrolledConfig, requestCtx, requestID, deviceID, false)
+		}
 		if err != nil {
 			t := i18n.T()
 			return RenderError(c, err, t("retrieving_asset"), requestConfig.Duration)
 		}
 
-		if requestConfig.Kiosk.PreFetch && !overrideActive {
+		if requestConfig.Kiosk.PreFetch && !bypassPrefetch {
 			go assetPreFetch(com, requestData, requestCtx)
 		}
 
 		go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhooks.NewAsset, viewData)
+		publishNowShowing(com.Context(), baseConfig, requestData, viewData)
 
 		if len(viewData.Assets) > 0 && requestConfig.ShowVideos && viewData.Assets[0].ImmichAsset.Type == immich.VideoType {
 			return Render(c, http.StatusOK, videoComponent.Video(viewData, com.Secret()))

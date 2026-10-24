@@ -87,6 +87,11 @@ func historyAsset(baseConfig *config.Config, com *common.Common, c *echo.Context
 		return c.NoContent(http.StatusNoContent)
 	}
 
+	// Sleep switched on in Home Assistant, regardless of the schedule.
+	if sleepForced(requestData.ClientName) {
+		return c.NoContent(http.StatusNoContent)
+	}
+
 	historyEntry, entryIndex := findHistoryEntry(requestConfig.History, useNextImage)
 
 	if historyEntry == "" {
@@ -151,6 +156,7 @@ func historyAsset(baseConfig *config.Config, com *common.Common, c *echo.Context
 	}
 
 	go webhooks.Trigger(com.Context(), requestData, KioskVersion, webhookEvent, viewData)
+	publishNowShowing(com.Context(), baseConfig, requestData, viewData)
 
 	s := transitionHandler(useNextImage, requestConfig.Transition)
 

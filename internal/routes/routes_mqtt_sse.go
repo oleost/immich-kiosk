@@ -215,6 +215,11 @@ func SetNewClientHandler(fn func(string)) {
 func MQTTCommandHandler() mqtt.Handler {
 	return func(cmd mqtt.Command, target string) {
 		log.Debug("MQTT command dispatched via SSE", "command", cmd, "target", target)
+		if cmd == mqtt.CommandReload {
+			// Never queued: a page that reconnects after reloading would reload again.
+			sseHub.sendEach(target, func(string) sseEvent { return sseEvent{sseEventCommand, string(cmd)} })
+			return
+		}
 		sseHub.broadcast(target, string(cmd))
 	}
 }
@@ -249,6 +254,11 @@ func SSEEvents(_ *config.Config) echo.HandlerFunc {
 		fmt.Fprintf(w, ": connected client=%s\n\n", clientName)
 		// Show a message that is still active after a reload or reconnect.
 		if ev, ok := messageEvent(clientName); ok {
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.name, ev.data)
+		}
+		// Pause and sleep set in Home Assistant also apply after a reload.
+		if switchStore != nil {
+			ev := controlEvent(clientName)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.name, ev.data)
 		}
 		flusher.Flush()

@@ -27,6 +27,14 @@ The main additions are about controlling Kiosk from Home Assistant over MQTT:
 - **Timed override** – show one image (or album) from a pre-approved list for a
   set time, e.g. tonight's recipe in the kitchen. Images are picked by their
   Immich description.
+- **Album and person focus** – show only one of the albums or people from your
+  config, on all screens or one screen, until you switch back to `Default`.
+  Albums in `albums_on_demand` are only shown when picked.
+- **Pause, sleep and reload** – freeze the image, put the screen to sleep or
+  reload the page from Home Assistant.
+- **Filters** – show only favorites, or only memories.
+- **What is showing** – a sensor with the current image's description, date,
+  place and people, and a small preview image.
 
 **How to set it up and use it: [MQTT.md](https://github.com/oleost/immich-kiosk/blob/main/MQTT.md).**
 

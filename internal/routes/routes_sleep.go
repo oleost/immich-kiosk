@@ -49,7 +49,13 @@ func Sleep(baseConfig *config.Config) echo.HandlerFunc {
 			}
 		}
 
-		sleepTime, _ := utils.IsSleepTime(requestConfig.SleepStart, requestConfig.SleepEnd, now)
+		// The page also asks when sleep is switched in Home Assistant, so the
+		// schedule may be missing or turned off with disable_sleep.
+		sleepTime := false
+		if requestConfig.SleepStart != "" && requestConfig.SleepEnd != "" && !requestConfig.DisableSleep {
+			sleepTime, _ = utils.IsSleepTime(requestConfig.SleepStart, requestConfig.SleepEnd, now)
+		}
+		sleepTime = sleepTime || sleepForced(requestData.ClientName)
 
 		runningInImmichFrame := c.Request().Header.Get("X-Requested-With") == "com.immichframe.immichframe"
 

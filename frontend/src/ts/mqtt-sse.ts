@@ -1,20 +1,23 @@
 /**
  * mqtt-sse.ts
  * Listens to the /events SSE endpoint and translates incoming MQTT navigation
- * commands into the HTMX events that the kiosk already understands, and shows
- * MQTT text messages.
+ * commands into the HTMX events that the kiosk already understands, shows
+ * MQTT text messages and applies the pause and sleep switches.
  */
 
 import htmx from "htmx.org";
+import { handleControlEvent, initMqttControl } from "./mqtt-control";
 import { handleMessageEvent } from "./mqtt-message";
 
-type KioskCommand = "next" | "previous";
+type KioskCommand = "next" | "previous" | "reload";
 
 /**
  * Initialises the SSE connection to /events.
  * Must be called after the kiosk element is available in the DOM.
  */
 export function initMqttSSE(): void {
+    initMqttControl();
+
     const params = new URLSearchParams(window.location.search);
     const url = params.toString() ? `/events?${params.toString()}` : "/events";
     const evtSource = new EventSource(url);
@@ -39,6 +42,9 @@ export function initMqttSSE(): void {
                 }
                 break;
             }
+            case "reload":
+                window.location.reload();
+                break;
             default:
                 console.warn("immich-kiosk: unknown MQTT command:", cmd);
         }
@@ -46,6 +52,10 @@ export function initMqttSSE(): void {
 
     evtSource.addEventListener("kiosk-message", (e: MessageEvent) => {
         handleMessageEvent(e.data as string);
+    });
+
+    evtSource.addEventListener("kiosk-control", (e: MessageEvent) => {
+        handleControlEvent(e.data as string);
     });
 
     evtSource.onerror = () => {

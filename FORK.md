@@ -3,7 +3,8 @@
 This is a fork of [damongolding/immich-kiosk](https://github.com/damongolding/immich-kiosk).
 It tracks upstream closely and carries a small set of extra changes on top.
 
-**Using the fork features** (MQTT, Home Assistant, text messages, override):
+**Using the fork features** (MQTT, Home Assistant, text messages, override,
+Home Assistant controls):
 see [MQTT.md](MQTT.md). This file describes the changes for maintaining the fork.
 
 ## How this fork stays in sync with upstream
@@ -142,6 +143,59 @@ lists the additions, and credits upstream.
 - `.github/ISSUE_TEMPLATE/config.yml`: blank issues allowed, and the upstream
   "Feature Request" discussion link replaced with the upstream docs (issues are
   enabled on the fork)
+
+### 9. Home Assistant controls (`feat: control the slideshow from Home Assistant`)
+
+Selects, switches, a button and sensors on every HA device, with no time
+limit. Builds on the MQTT feature (1).
+
+- **`Album: show` / `Person: show`** (selects): narrow the slideshow down to
+  one album or person. Options: `Default` plus the albums/people from
+  `config.yaml` on the "all" device, and those a client requests (URL or
+  config) on a client device. Labels are the Immich names, made unique;
+  keywords get fixed labels, unnamed items `Unnamed (<id start>)`. A device
+  with fewer than two items gets no select. Album and person exclude each
+  other on one device. `internal/focus` holds the lists and selections.
+- **`albums_on_demand`** (top-level, next to `albums`): extra album options on
+  every device that are never part of `Default`. A separate key rather than a
+  marker inside `albums`, so no upstream code that reads `albums` changes. Not
+  settable via URL (`?album=<id>` already shows any album).
+- **Switches** (`internal/switches`): `Slideshow: pause`, `Slideshow: sleep`,
+  `Filter: favorites`, `Filter: memories`. On for "all" applies to every
+  client; a client switch can add, not cancel.
+  - Pause and sleep reach the browser as a `kiosk-control` SSE event (also on
+    connect). Pause holds across next/previous (`frontend/src/ts/mqtt-control.ts`
+    re-pauses after each asset). Sleep makes `/asset/new`, `/asset/previous`
+    and `/sleep` report sleep; the browser asks `/sleep`, so upstream's sleep
+    mode, icon and screen dimming are used unchanged. `/sleep` only checks the
+    schedule when one is set and `disable_sleep` is off.
+  - Favorites sets `filter_favorites`; memories switches to memories only when
+    Immich has memories for today. If the controls leave nothing to show, the
+    request is retried with the normal sources.
+- **`Page: reload`** button: `reload` on the navigation command topic, sent
+  only to connected clients (never queued, or a reconnecting page would
+  reload again).
+- **`Image: current`** sensor (state + JSON attributes) and **`Image: preview`**
+  image (JPEG, max 640 px), published per client and on the "all" device
+  (last image anywhere) whenever a new or history asset is served.
+- Client lists are learned from asset requests (in memory). Selections and
+  switches are retained states, restored on startup; default states are
+  published 3 s after discovery so they cannot overwrite a retained state
+  that has not arrived yet.
+- An override wins over all controls. While a control is active the prefetch
+  cache is bypassed, as for overrides.
+
+Files:
+- `internal/focus/` (new, + tests), `internal/switches/` (new, + tests)
+- `internal/mqtt/controls.go`, `internal/mqtt/now_showing.go` (new),
+  `internal/mqtt/mqtt.go` (+ `mqtt_test.go`)
+- `internal/routes/routes_controls.go`, `internal/routes/routes_now_showing.go`
+  (new, + `routes_controls_test.go`), `internal/routes/routes_mqtt_sse.go`
+- `internal/routes/routes_asset.go`, `internal/routes/routes_previous_asset.go`,
+  `internal/routes/routes_sleep.go` (small upstream-file changes)
+- `frontend/src/ts/mqtt-control.ts` (new), `frontend/src/ts/mqtt-sse.ts`
+- `internal/config/config.go`, `config.schema.json` (`albums_on_demand`), `main.go`
+- `MQTT.md`, `.github/README.md`, `config.example.yaml`
 
 ## Previously carried, now upstream
 

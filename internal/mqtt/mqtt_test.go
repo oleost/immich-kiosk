@@ -135,3 +135,74 @@ func TestOverrideTargetsIncludeSeenClients(t *testing.T) {
 		t.Errorf("pc duration = %v, want the 2h default", d)
 	}
 }
+
+func TestControlTarget(t *testing.T) {
+	c := &Client{topicPrefix: "kiosk"}
+	tests := []struct {
+		topic, field, leaf string
+		target             string
+		ok                 bool
+	}{
+		{"kiosk/album/set", "album", "set", "", true},
+		{"kiosk/ipad/pause/state", "pause", "state", "ipad", true},
+		// The topics of an override source named "pause", not a switch.
+		{"kiosk/override/pause/set", "pause", "set", "", false},
+		{"kiosk/message/sleep/set", "sleep", "set", "", false},
+		{"kiosk/ipad/pause/set", "sleep", "set", "", false},
+		{"kiosk/a/b/pause/set", "pause", "set", "", false},
+	}
+	for _, tt := range tests {
+		target, ok := c.controlTarget(tt.topic, tt.field, tt.leaf)
+		if target != tt.target || ok != tt.ok {
+			t.Errorf("controlTarget(%s) = %q, %v; want %q, %v", tt.topic, target, ok, tt.target, tt.ok)
+		}
+	}
+}
+
+func TestSelectStateRestore(t *testing.T) {
+	var restored []string
+	c := &Client{topicPrefix: "kiosk"}
+	sel := SelectControl{
+		Field:   "album",
+		Options: func(string) ([]string, bool) { return nil, false },
+		Restore: func(target, option string) bool {
+			restored = append(restored, option+"@"+target)
+			return true
+		},
+	}
+
+	for _, m := range []fakeMessage{
+		{"kiosk/album/state", "Cabin"},
+		{"kiosk/ipad/album/state", "Default"},
+		{"kiosk/override/album/state", "off"},
+		{"kiosk/ipad/album/state", ""},
+	} {
+		c.controlHandler("album", "state", func(target, value string) { c.handleSelectState(sel, target, value) })(nil, m)
+	}
+
+	if want := []string{"Cabin@", "Default@ipad"}; !slices.Equal(restored, want) {
+		t.Errorf("restored = %v, want %v", restored, want)
+	}
+}
+
+func TestParseSwitch(t *testing.T) {
+	for value, want := range map[string]bool{"ON": true, "on": true, "OFF": false} {
+		if on, ok := parseSwitch(value); !ok || on != want {
+			t.Errorf("parseSwitch(%q) = %v, %v", value, on, ok)
+		}
+	}
+	if _, ok := parseSwitch("maybe"); ok {
+		t.Error("parseSwitch accepted an invalid value")
+	}
+}
+
+func TestNavigationReload(t *testing.T) {
+	var calls []string
+	c := &Client{topicPrefix: "kiosk"}
+	c.AddHandler(func(cmd Command, target string) { calls = append(calls, string(cmd)+"@"+target) })
+
+	c.messageHandler(nil, fakeMessage{"kiosk/ipad/command", "reload"})
+	if want := []string{"reload@ipad"}; !slices.Equal(calls, want) {
+		t.Errorf("got %v, want %v", calls, want)
+	}
+}
