@@ -8,6 +8,8 @@ Home Assistant (HA). You can:
   ("Dinner is ready!").
 - **Override the slideshow** – show one image or album from a pre-approved list
   for a set time (tonight's recipe in the kitchen).
+- **Focus on one album** – show only one of the albums from your config until
+  you switch back.
 
 Everything works for all screens at once, or for a single named screen.
 
@@ -17,6 +19,7 @@ Everything works for all screens at once, or for a single named screen.
 - [Navigation](#navigation)
 - [Text messages](#text-messages)
 - [Override](#override)
+- [Album focus](#album-focus)
 - [Home Assistant examples](#home-assistant-examples)
 - [MQTT topic reference](#mqtt-topic-reference)
 - [Good to know](#good-to-know)
@@ -80,12 +83,15 @@ gets the same entities. Commands on the "all" device go to every screen.
 | Image: previous | button | Controls | Previous image |
 | Message: send | button | Controls | Shows *Message: content* for *Message: duration* |
 | Message: stop | button | Controls | Removes the message |
+| Album: show | select | Controls | Show only one album, or `Default` |
 | Override: &lt;source name&gt; | select | Controls | One per override source: pick an image, or `off` |
 | Message: content | text | Configuration | The message text (max 255 characters) |
 | Message: duration | number | Configuration | Minutes the message stays (1–1440, default 5) |
 | Override: duration | number | Configuration | Minutes an override stays (1 to `override_max_duration`) |
 
 The override entities only exist when `override_sources` is configured.
+*Album: show* only exists on a device with at least two albums, see
+[Album focus](#album-focus).
 
 HA sorts entities alphabetically by name within each section, which is why the
 names have prefixes. The content and duration values are stored as retained
@@ -200,6 +206,56 @@ adding a recipe.
 
 `start` uses **Override: duration** of the device it is sent to.
 
+## Album focus
+
+With several albums in `albums:`, Kiosk normally picks images from all of them
+(see the upstream docs for weighting). **Album: show** lets you narrow the
+slideshow down to one of them until you switch back. Nothing new is needed in
+`config.yaml`.
+
+```yaml
+albums:
+  - "id-of-summer-2025"
+  - "id-of-cabin"
+  - "id-of-birthdays"
+```
+
+gives the options `Default`, `Birthdays`, `Cabin` and `Summer 2025`.
+
+- **`Default`** is the normal slideshow: the albums from `config.yaml`, or the
+  albums in the screen's URL (`?album=…`), mixed with any people, tags, dates
+  or memories you have configured. Nothing changes until you pick something
+  else.
+- **An album** shows only that album. People, tags, dates and memories are left
+  out; filters such as `filter_date` still apply.
+
+**All screens or one screen:**
+
+- On **Immich Kiosk (all)** the options are the albums from `config.yaml`. The
+  choice applies to every screen, also screens with their own albums in the
+  URL. Back on `Default`, every screen shows its own albums again.
+- On a screen's device the options are the albums that screen uses (from its
+  URL, or `config.yaml` when the URL has none). The choice applies only to that
+  screen and wins over the "all" device. `Default` here means "follow the all
+  device".
+- An [override](#override) wins while it lasts. Afterwards the screen goes back
+  to the focused album.
+
+**Names:** albums are listed by their name in Immich. The keywords `all`,
+`owned`, `shared` and `favorites` are listed as `All albums`, `Owned albums`,
+`Shared albums` and `Favorites`. An album of another user (`id@user`) gets the
+user name added, and an album that cannot be found is listed by its ID. Two
+albums with the same name get `(2)`, `(3)` … added. The names are read when
+Kiosk starts and when the album list changes; restart Kiosk after renaming an
+album in Immich.
+
+**Kept across restarts:** the choice is stored as a retained MQTT state. After a
+restart a screen's own choice takes effect when the screen loads its first
+image.
+
+**From automations and scripts**, publish the album name (or `Default`) to
+`immich-kiosk/album/set` (all screens) or `immich-kiosk/<name>/album/set`.
+
 ## Home Assistant examples
 
 The entity IDs below are examples. Find yours on the device page or in
@@ -242,6 +298,21 @@ Show a recipe in the kitchen for 90 minutes:
     option: "Lasagne"
 ```
 
+Show only the cabin album on every screen, and back to normal:
+
+```yaml
+- action: select.select_option
+  target:
+    entity_id: select.immich_kiosk_all_album_show
+  data:
+    option: "Cabin"
+- action: select.select_option
+  target:
+    entity_id: select.immich_kiosk_all_album_show
+  data:
+    option: "Default"
+```
+
 Next image on every screen:
 
 ```yaml
@@ -273,6 +344,8 @@ the topic exists both without a client name (all screens) and with one.
 | `<prefix>[/<client>]/override/<key>/state` | Kiosk → | active image name or `off` (retained) |
 | `<prefix>[/<client>]/override/duration/set` | → Kiosk | minutes (from HA) |
 | `<prefix>[/<client>]/override/duration/state` | Kiosk → | current minutes (retained) |
+| `<prefix>[/<client>]/album/set` | → Kiosk | album name or `Default` (from HA) |
+| `<prefix>[/<client>]/album/state` | Kiosk → | focused album or `Default` (retained) |
 
 Discovery configs are published under `homeassistant/…`. Kiosk listens on
 `homeassistant/status` and republishes its states when HA comes back online.
@@ -280,7 +353,7 @@ Discovery configs are published under `homeassistant/…`. Kiosk listens on
 ## Good to know
 
 - **Kept in memory:** active messages and overrides end when Kiosk restarts. The
-  content and duration fields are kept (retained in MQTT).
+  content and duration fields and the album focus are kept (retained in MQTT).
 - **Entity IDs** are set by HA when an entity is first created. Renaming an
   entity later only changes its name. To get fresh IDs, delete the device in HA;
   Kiosk recreates it (the "all" device on restart, a client device when that
