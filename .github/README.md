@@ -36,6 +36,12 @@ The main additions are about controlling Kiosk from Home Assistant over MQTT:
 - **What is showing** – a sensor with the current image's description, date,
   place and people, and a small preview image.
 
+<div align="center">
+  <img src="https://raw.githubusercontent.com/oleost/immich-kiosk/main/.github/assets/home-assistant-device.png" width="720" height="auto" alt="Immich Kiosk device page in Home Assistant with controls, sensors and configuration entities" />
+  <br />
+  <em>A Kiosk screen as a device in Home Assistant.</em>
+</div>
+
 **How to set it up and use it: [MQTT.md](https://github.com/oleost/immich-kiosk/blob/main/MQTT.md).**
 
 Everything else works exactly like upstream Kiosk, so for installation and all

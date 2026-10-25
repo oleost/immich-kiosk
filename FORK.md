@@ -140,6 +140,8 @@ rebases never conflict on it). It marks the fork as unofficial and AI-assisted,
 lists the additions, and credits upstream.
 
 - `.github/README.md` (new), `FORK.md`
+- `.github/assets/home-assistant-device.png`: screenshot of the Home Assistant
+  device page shown in the README
 - `.github/ISSUE_TEMPLATE/config.yml`: blank issues allowed, and the upstream
   "Feature Request" discussion link replaced with the upstream docs (issues are
   enabled on the fork)
